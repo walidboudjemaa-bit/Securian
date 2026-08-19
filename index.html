@@ -126,49 +126,77 @@ function overlap(a,b){
  return startA<endB&&startB<endA;
 }
 function variableCalc(sh){
- let [h1,m1]=sh.start.split(":").map(Number),[h2,m2]=sh.end.split(":").map(Number);
- let start=h1*60+m1,end=h2*60+m2;if(end<=start)end+=1440;
- const dur=(end-start)/60;
- let dayHours=0,nightHours=0,sundayDayHours=0,sundayNightHours=0,holidayHours=0;
- const holidays=["2026-01-01","2026-04-06","2026-05-01","2026-05-08","2026-05-14","2026-05-25","2026-07-14","2026-08-15","2026-11-01","2026-11-11","2026-12-25"];
- for(let x=start;x<end;x++){
-   const minute=x%1440;
-   const dayOffset=Math.floor(x/1440);
-   const date=new Date(sh.date+"T12:00:00");date.setDate(date.getDate()+dayOffset);
-   const day=date.getDay(); // 0 dimanche, 6 samedi
-   const dateStr=date.toISOString().slice(0,10);
-   const isSunday=day===0;
-   const isHoliday=holidays.includes(dateStr);
+  // Règles SECURIAN :
+  // JOUR : lun-sam 06:00–21:00
+  // NUIT : lun-ven 21:00–06:00 + sam 21:00–24:00
+  // DIMANCHE JOUR : 06:00–21:00
+  // DIMANCHE NUIT : 00:01–06:00 + 21:00–24:00
+  // FÉRIÉ JOUR / FÉRIÉ NUIT : même découpage horaire, mais sur une date fériée.
 
-   // Règles SECURIAN :
-   // Jour : lundi à samedi 06:00–21:00
-   // Nuit : lundi à vendredi 21:00–06:00 + samedi 21:00–24:00
-   // Dimanche nuit : 00:00–06:00 + 21:00–24:00
-   // Dimanche jour : 06:00–21:00
-   const isNight = minute>=21*60 || minute<6*60;
-   if(isSunday){
-     if(isNight) sundayNightHours+=1/60;
-     else sundayDayHours+=1/60;
-   }else{
-     if(isNight) nightHours+=1/60;
-     else dayHours+=1/60;
-   }
-   if(isHoliday) holidayHours+=1/60;
- }
- const sundayHours=sundayDayHours+sundayNightHours;
- return {
-   hours:dur,
-   dayHours,
-   night:nightHours+sundayNightHours,
-   sundayDayHours,
-   sundayNightHours,
-   sundayHours,
-   holidayHours,
-   sunday:sundayHours>0,
-   holiday:holidayHours>0,
-   panier:dur>=6?1:0,
-   habillageHours:dur*(10/60)
- };
+  const [h1,m1]=sh.start.split(":").map(Number);
+  const [h2,m2]=sh.end.split(":").map(Number);
+  let start=h1*60+m1,end=h2*60+m2;
+  if(end<=start)end+=1440;
+
+  let dayHours=0,nightHours=0;
+  let sundayDayHours=0,sundayNightHours=0;
+  let holidayDayHours=0,holidayNightHours=0;
+
+  const holidays=[
+    "2026-01-01","2026-04-06","2026-05-01","2026-05-08",
+    "2026-05-14","2026-05-25","2026-07-14","2026-08-15",
+    "2026-11-01","2026-11-11","2026-12-25"
+  ];
+
+  for(let minuteIndex=start;minuteIndex<end;minuteIndex++){
+    const minuteOfDay=minuteIndex%1440;
+    const dateOffset=Math.floor(minuteIndex/1440);
+    const d=new Date(sh.date+"T12:00:00");
+    d.setDate(d.getDate()+dateOffset);
+
+    const day=d.getDay();
+    const dateStr=[
+      d.getFullYear(),
+      String(d.getMonth()+1).padStart(2,"0"),
+      String(d.getDate()).padStart(2,"0")
+    ].join("-");
+
+    const isSunday=day===0;
+    const isNight=minuteOfDay>=1260 || minuteOfDay<360;
+    const isHoliday=holidays.includes(dateStr);
+
+    if(isSunday){
+      if(isNight)sundayNightHours+=1/60;
+      else sundayDayHours+=1/60;
+    }else{
+      if(isNight)nightHours+=1/60;
+      else dayHours+=1/60;
+    }
+
+    if(isHoliday){
+      if(isNight)holidayNightHours+=1/60;
+      else holidayDayHours+=1/60;
+    }
+  }
+
+  const hours=(end-start)/60;
+
+  return {
+    hours,
+    dayHours,
+    night:nightHours+sundayNightHours,
+    nightHours:nightHours+sundayNightHours,
+    sundayDayHours,
+    sundayNightHours,
+    sundayHours:sundayDayHours+sundayNightHours,
+    holidayDayHours,
+    holidayNightHours,
+    holidayHours:holidayDayHours+holidayNightHours,
+    sunday:sundayDayHours+sundayNightHours>0,
+    holiday:holidayDayHours+holidayNightHours>0,
+    panier:hours>=6?1:0,
+    habillageHours:hours*(10/60)
+  };
 }
 
 function createShift(){
@@ -576,7 +604,7 @@ function openPlanningPrint(kind,rows,month,entityId){
    const v=variableCalc(s);
    total+=v.hours; totalNight+=v.night; totalSun+=v.sundayHours||0; totalHoliday+=v.holidayHours||0;
    const common=`<td>${frDay(date)}</td><td>${frDate(date)}</td><td>${esc(s.start)}-${esc(s.end)}</td><td>${fmt(v.hours)}</td>`;
-   const variables=`<td>${v.hours?fmt(v.hours):""}</td><td>${v.night?fmt(v.night):""}</td><td>${v.sundayHours?fmt(v.sundayHours):""}</td><td>${v.sundayNightHours?fmt(v.sundayNightHours):""}</td><td>${v.holidayHours?fmt(v.holidayHours):""}</td><td>${v.holiday&&v.night?fmt(Math.min(v.night,v.holidayHours)):""}</td>`;
+   const variables=`<td>${v.hours?fmt(v.hours):""}</td><td>${v.night?fmt(v.night):""}</td><td>${v.sundayHours?fmt(v.sundayHours):""}</td><td>${v.sundayNightHours?fmt(v.sundayNightHours):""}</td><td>${v.holidayDayHours?fmt(v.holidayDayHours):""}</td><td>${v.holidayNightHours?fmt(v.holidayNightHours):""}</td>`;
    if(kind==="site"){
     return `<tr>${common}<td>${esc(client?.name||"")}</td><td>${esc(site?.name||"")}</td><td>${subAgent?esc(subcontractor?.name||"Sous-traitant")+" — "+esc(subAgent.first+" "+subAgent.last):esc(agent?agent.first+" "+agent.last:"À pourvoir")}</td>${variables}</tr>`;
    }
@@ -585,8 +613,8 @@ function openPlanningPrint(kind,rows,month,entityId){
  }).join("");
 
  const header=kind==="site"
-  ? `<th>JOUR</th><th>DATE</th><th>HORAIRES</th><th>HEURES</th><th>CLIENT</th><th>SITES</th><th>INTERVENANT</th><th>J</th><th>N</th><th>D</th><th>DN</th><th>F</th><th>FN</th>`
-  : `<th>JOUR</th><th>DATE</th><th>HORAIRES</th><th>HEURES</th><th>SITES</th><th>INTERVENANT</th><th>J</th><th>N</th><th>D</th><th>DN</th><th>F</th><th>FN</th>`;
+  ? `<th>JOUR</th><th>DATE</th><th>HORAIRES</th><th>HEURES</th><th>CLIENT</th><th>SITES</th><th>INTERVENANT</th><th>J</th><th>N</th><th>DJ</th><th>DN</th><th>FJ</th><th>FN</th>`
+  : `<th>JOUR</th><th>DATE</th><th>HORAIRES</th><th>HEURES</th><th>SITES</th><th>INTERVENANT</th><th>J</th><th>N</th><th>DJ</th><th>DN</th><th>FJ</th><th>FN</th>`;
 
  const totals=kind==="site"
   ? `<tr class="total"><td>TOTAL</td><td></td><td></td><td>${fmt(total)}</td><td></td><td></td><td></td><td>${fmt(total)}</td><td>${fmt(totalNight)}</td><td>${fmt(totalSun)}</td><td></td><td>${fmt(totalHoliday)}</td><td></td></tr>`
@@ -613,7 +641,7 @@ function openPlanningPrint(kind,rows,month,entityId){
  </style></head><body>
  <div class="head"><img src="${logo}" alt="SECURIAN"><div><h1>SECURIAN</h1><div class="range">${range}</div><div class="tel">${esc(companySettings.address)}</div><div class="tel">TEL : 06.10.68.63.47</div><div class="entity">${entityTitle}</div></div><div></div></div>
  <table><thead><tr>${header}</tr></thead><tbody>${body}${totals}</tbody></table>
- <div class="foot">${esc(companySettings.planningDisclaimer)}<br>${esc(companySettings.cnaps)}<br>J = heures de jour (lun-sam 06h00–21h00) • N = heures de nuit (lun-ven 21h00–06h00 + sam 21h00–24h00) • DJ = dimanche jour 06h00–21h00 • DN = dimanche nuit 00h00–06h00 et 21h00–24h00 • F = férié • 🤝 = sous-traitant.</div>
+ <div class="foot">${esc(companySettings.planningDisclaimer)}<br>${esc(companySettings.cnaps)}<br>J = heures de jour • N = nuit lun-ven 21h00–06h00 + sam 21h00–24h00 • DJ = dimanche 06h00–21h00 • DN = dimanche 00h01–06h00 + 21h00–24h00 • FJ = férié jour • FN = férié nuit • F = férié • 🤝 = sous-traitant.</div>
  <script>window.addEventListener('load',()=>setTimeout(()=>window.print(),250));<\/script></body></html>`);
  w.document.close();
 }
@@ -636,7 +664,7 @@ function planning(){
  <div class="formgrid" style="margin-top:14px"><label class="small">Mois</label><input id="planMonth" class="field" type="month" value="${month}" onchange="state.planMonth=this.value;render()"><label class="small">Client</label><select class="field" onchange="state.planClient=this.value;render()"><option value="">Tous les clients</option>${clientsData.map(c=>`<option value="${c.id}" ${selectedClient==String(c.id)?"selected":""}>${esc(c.name)}</option>`).join("")}</select><label class="small">Site</label><select class="field" onchange="state.planSite=this.value;render()"><option value="">Tous les sites</option>${sitesData.map(s=>`<option value="${s.id}" ${selectedSite==String(s.id)?"selected":""}>${esc(s.name)} — ${esc(s.city)}</option>`).join("")}</select><label class="small">Agent</label><select class="field" onchange="state.planAgent=this.value;render()"><option value="">Tous les agents</option>${agentsData.map(a=>`<option value="${a.id}" ${selectedAgent==String(a.id)?"selected":""}>${esc(a.first)} ${esc(a.last)}</option>`).join("")}</select></div>
  <div class="row"><button class="${view==="month"?"primary":"outline"}" onclick="planningView('month')">📅 Mois</button><button class="${view==="list"?"primary":"outline"}" onclick="planningView('list')">☷ Liste</button></div><div class="row"><button class="outline" onclick="exportPlanningCSV()">⬇️ CSV</button><button class="outline" onclick="printPlanning()">🖨️ PDF GÉNÉRAL</button><button class="outline" onclick="printAgentPlanning()">👮 PDF AGENT</button><button class="outline" onclick="printSitePlanning()">🏢 PDF SITE + CLIENT</button></div>
  ${view==="month"?monthGrid():`<div class="section">${filtered.length} vacation(s)</div><div class="list">${filtered.map(sh=>{const v=variableCalc(sh);return `<div class="item"><div class="itemtop"><strong>📅 ${esc(sh.date)} • ${esc(sh.start)} → ${esc(sh.end)}</strong><span class="badge ${sh.status==="Affecté"?"ok":"warn"}">${esc(sh.status)}</span></div><div class="small">👤 Client : ${esc((clientsData.find(c=>c.id===Number((sitesData.find(s=>s.id===sh.siteId)||{}).clientId))||{}).name||"")}</div><div class="small">🏢 ${esc(siteName(sh.siteId))} • ${sh.subAgentId?`🤝 ${esc(getSubName(sh.subcontractorId))} • 👮 ${esc(getSubAgentName(sh.subAgentId))}`:`👮 ${esc(agentName(sh.agentId))}`}</div><div class="small">⏱️ ${v.hours} h • 🌙 ${v.night} h nuit • 🍽️ ${v.panier} panier • 👕 ${v.habillageHours.toFixed(2)} h habillage</div><div class="row">${sh.status==="À pourvoir"&&canManage()?`<button class="primary" onclick="proposeShift(${sh.id})">🔎 RECHERCHER DES AGENTS</button>`:""}${sh.status==="En attente de validation"&&canManage()?`<button class="primary" onclick="validateShift(${sh.id})">✅ VALIDER</button>`:""}</div></div>`}).join("")}</div>`}
- <div class="section">Synthèse du mois</div><div class="grid"><div class="stat">📅<b>${filtered.length}</b><span>vacations</span></div><div class="stat">⏱️<b>${filtered.reduce((n,s)=>n+variableCalc(s).hours,0).toFixed(1)}</b><span>heures</span></div><div class="stat">🌙<b>${filtered.reduce((n,s)=>n+variableCalc(s).night,0).toFixed(1)}</b><span>heures nuit</span></div><div class="stat">🍽️<b>${filtered.reduce((n,s)=>n+variableCalc(s).panier,0)}</b><span>paniers</span></div></div>`;
+ <div class="item" style="margin-top:12px"><strong>⏱️ Règles horaires SECURIAN</strong><div class="small">Jour : lun-sam 06h00–21h00 • Nuit : lun-ven 21h00–06h00 + sam 21h00–24h00 • Dimanche jour : 06h00–21h00 • Dimanche nuit : 00h01–06h00 + 21h00–24h00.</div></div><div class="section">Synthèse du mois</div><div class="grid"><div class="stat">📅<b>${filtered.length}</b><span>vacations</span></div><div class="stat">⏱️<b>${filtered.reduce((n,s)=>n+variableCalc(s).hours,0).toFixed(1)}</b><span>heures</span></div><div class="stat">🌙<b>${filtered.reduce((n,s)=>n+variableCalc(s).night,0).toFixed(1)}</b><span>heures nuit</span></div><div class="stat">🍽️<b>${filtered.reduce((n,s)=>n+variableCalc(s).panier,0)}</b><span>paniers</span></div></div>`;
 }
 function pointage(){return `<div class="eyebrow">PRÉSENCE</div><div class="h1">Pointage</div><div class="card"><div style="font-size:38px">📍</div><div class="title">Centre commercial — Montpellier</div><div class="muted">La géolocalisation est utilisée uniquement pour le pointage et le service.</div><button class="primary" style="width:100%;margin-top:18px" onclick="toast('Service démarré • position enregistrée')">DÉMARRER MON SERVICE</button><button class="outline" style="width:100%;margin-top:9px" onclick="toast('Service terminé • pointage enregistré')">TERMINER MON SERVICE</button><button class="darkbtn" style="width:100%;margin-top:9px" onclick="waze('Centre commercial Montpellier')">🧭 ITINÉRAIRE WAZE</button></div>`}
 
