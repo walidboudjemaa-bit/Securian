@@ -39,25 +39,60 @@ const roles={
 let state={role:"direction",screen:"dashboard",modal:null,editType:null,editIndex:null};
 
 let accounts=JSON.parse(localStorage.getItem("securian_accounts")||"[]");
+let clientsData=JSON.parse(localStorage.getItem("securian_clients")||"null")||[
+ {id:1,name:"Client Montpellier",contact:"",phone:"",email:"",status:"Actif"},
+ {id:2,name:"Client Sète",contact:"",phone:"",email:"",status:"Actif"},
+ {id:3,name:"Client Béziers",contact:"",phone:"",email:"",status:"Actif"}
+];
 let sitesData=JSON.parse(localStorage.getItem("securian_sites")||"null")||[
- {id:1,name:"Centre commercial",city:"Montpellier",address:"Montpellier, France",type:"Centre commercial",status:"Actif",instructions:"Contrôle des accès, rondes toutes les 2 heures."},
- {id:2,name:"Entrepôt",city:"Sète",address:"Sète, France",type:"Entrepôt",status:"Actif",instructions:"Contrôle quai et fermeture des accès."},
- {id:3,name:"Hôtel",city:"Béziers",address:"Béziers, France",type:"Hôtel",status:"Actif",instructions:"Accueil, rondes et contrôle des parties communes."}
+ {id:1,name:"Centre commercial",city:"Montpellier",address:"Montpellier, France",type:"Centre commercial",clientId:1,status:"Actif",instructions:"Contrôle des accès, rondes toutes les 2 heures."},
+ {id:2,name:"Entrepôt",city:"Sète",address:"Sète, France",type:"Entrepôt",clientId:2,status:"Actif",instructions:"Contrôle quai et fermeture des accès."},
+ {id:3,name:"Hôtel",city:"Béziers",address:"Béziers, France",type:"Hôtel",clientId:3,status:"Actif",instructions:"Accueil, rondes et contrôle des parties communes."}
 ];
 let agentsData=JSON.parse(localStorage.getItem("securian_agents")||"null")||[
- {id:1,first:"Ahmed",last:"B.",type:"Agent SECURIAN",phone:"",email:"",card:"Valide",status:"Actif",site:"Centre commercial — Montpellier"},
- {id:2,first:"Karim",last:"D.",type:"Agent SECURIAN",phone:"",email:"",card:"28 jours",status:"Actif",site:"Entrepôt — Sète"},
- {id:3,first:"Sofiane",last:"M.",type:"Agent SECURIAN",phone:"",email:"",card:"Valide",status:"Actif",site:"Hôtel — Béziers"}
+ {id:1,first:"Ahmed",last:"B.",type:"Agent SECURIAN",phone:"",email:"",card:"Valide",cardNumber:"",cardExpiry:"",status:"Actif",site:"Centre commercial — Montpellier"},
+ {id:2,first:"Karim",last:"D.",type:"Agent SECURIAN",phone:"",email:"",card:"28 jours",cardNumber:"",cardExpiry:"",status:"Actif",site:"Entrepôt — Sète"},
+ {id:3,first:"Sofiane",last:"M.",type:"Agent SECURIAN",phone:"",email:"",card:"Valide",cardNumber:"",cardExpiry:"",status:"Actif",site:"Hôtel — Béziers"}
+];
+
+const SUB_DOCS=["CNI du dirigeant","Autorisation CNAPS du dirigeant","Autorisation de la société","Kbis","Assurance de la société","Attestation de vigilance","Attestation de régularité fiscale","Attestation de travail dissimulé"];
+let subDocsData=JSON.parse(localStorage.getItem("securian_sub_docs")||"null")||{};
+let subAgentsData=JSON.parse(localStorage.getItem("securian_sub_agents")||"null")||[
+ {id:1,subId:1,first:"Mohamed",last:"A.",phone:"",email:"",cardNumber:"",cardExpiry:"",status:"Actif",sites:[]},
+ {id:2,subId:1,first:"Nabil",last:"K.",phone:"",email:"",cardNumber:"",cardExpiry:"",status:"Actif",sites:[]},
+ {id:3,subId:2,first:"Youssef",last:"M.",phone:"",email:"",cardNumber:"",cardExpiry:"",status:"Actif",sites:[]}
 ];
 let subcontractorsData=JSON.parse(localStorage.getItem("securian_subcontractors")||"null")||[
  {id:1,name:"PROTECT PLUS",contact:"",phone:"",email:"",agents:8,status:"Actif"},
  {id:2,name:"SECURITY PARTNER",contact:"",phone:"",email:"",agents:5,status:"Actif"},
  {id:3,name:"SUD PROTECTION",contact:"",phone:"",email:"",agents:11,status:"Actif"}
 ];
+
+function cardDays(dateStr){
+ if(!dateStr)return null;
+ const d=new Date(dateStr+"T23:59:59");
+ if(Number.isNaN(d.getTime()))return null;
+ return Math.ceil((d-new Date())/86400000);
+}
+function cardBadge(dateStr){
+ const n=cardDays(dateStr);
+ if(n===null)return {label:"Non renseignée",cls:"warn"};
+ if(n<0)return {label:"EXPIRÉE",cls:"danger"};
+ if(n<=90)return {label:`${n} j`,cls:"warn"};
+ return {label:"VALIDE",cls:"ok"};
+}
+function cardReminder(dateStr){
+ const n=cardDays(dateStr);
+ return n!==null && n>=0 && n<=90;
+}
 function saveData(){
+ agentsData=agentsData.map(a=>({...a,cardNumber:a.cardNumber||"",cardExpiry:a.cardExpiry||""}));
+ localStorage.setItem("securian_clients",JSON.stringify(clientsData));
  localStorage.setItem("securian_sites",JSON.stringify(sitesData));
  localStorage.setItem("securian_agents",JSON.stringify(agentsData));
  localStorage.setItem("securian_subcontractors",JSON.stringify(subcontractorsData));
+ localStorage.setItem("securian_sub_docs",JSON.stringify(subDocsData));
+ localStorage.setItem("securian_sub_agents",JSON.stringify(subAgentsData));
 }
 function esc(v){return String(v??"").replace(/[&<>"']/g,m=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#039;"}[m]))}
 function canManage(){return state.role==="direction"}
@@ -73,16 +108,19 @@ function removeSub(i){if(!requireDirection())return;if(!confirm("Supprimer ce so
 function submitEntity(type){
  if(!requireDirection())return;
  if(type==="site"){
-  const name=esc(document.getElementById("siteName").value.trim()),city=esc(document.getElementById("siteCity").value.trim()),address=esc(document.getElementById("siteAddress").value.trim()),kind=esc(document.getElementById("siteType").value),instructions=esc(document.getElementById("siteInstructions").value.trim());
+  const name=esc(document.getElementById("siteName").value.trim()),city=esc(document.getElementById("siteCity").value.trim()),address=esc(document.getElementById("siteAddress").value.trim()),kind=esc(document.getElementById("siteType").value),clientId=Number(document.getElementById("siteClient").value)||null,instructions=esc(document.getElementById("siteInstructions").value.trim());
   if(!name||!city){toast("Nom du site et ville obligatoires");return}
-  const obj={id:Date.now(),name,city,address,type:kind,status:"Actif",instructions};
+  if(!clientId){toast("Sélectionnez un client");return}
+  const obj={id:Date.now(),name,city,address,type:kind,clientId,status:"Actif",instructions};
   if(state.editType==="site" && state.editIndex!=null) sitesData[state.editIndex]={...sitesData[state.editIndex],...obj,id:sitesData[state.editIndex].id};
   else sitesData.push(obj);
  }
  if(type==="agent"){
-  const first=esc(document.getElementById("agentFirst").value.trim()),last=esc(document.getElementById("agentLast").value.trim()),phone=esc(document.getElementById("agentPhone").value.trim()),email=esc(document.getElementById("agentEmail").value.trim()),card=esc(document.getElementById("agentCard").value),site=esc(document.getElementById("agentSite").value);
+  const first=esc(document.getElementById("agentFirst").value.trim()),last=esc(document.getElementById("agentLast").value.trim()),phone=esc(document.getElementById("agentPhone").value.trim()),email=esc(document.getElementById("agentEmail").value.trim()),card=esc(document.getElementById("agentCard").value),cardNumber=esc(document.getElementById("agentCardNumber").value.trim()),cardExpiry=esc(document.getElementById("agentCardExpiry").value),site=esc(document.getElementById("agentSite").value);
   if(!first||!last){toast("Nom et prénom obligatoires");return}
-  const obj={id:Date.now(),first,last,type:"Agent SECURIAN",phone,email,card,status:"Actif",site};
+  if(!cardNumber){toast("Numéro de carte professionnelle obligatoire");return}
+  if(!cardExpiry){toast("Date de fin de validité obligatoire");return}
+  const obj={id:Date.now(),first,last,type:"Agent SECURIAN",phone,email,card,cardNumber,cardExpiry,status:"Actif",site};
   if(state.editType==="agent" && state.editIndex!=null) agentsData[state.editIndex]={...agentsData[state.editIndex],...obj,id:agentsData[state.editIndex].id};
   else agentsData.push(obj);
  }
@@ -133,14 +171,29 @@ root.innerHTML=`<div class="app">
 
 function modalHTML(){
  if(!state.modal)return "";
+ if(state.modal==="subdetail")return subDetailHTML();
+ if(state.modal==="subagent"){
+  const s=subcontractorsData.find(x=>x.id===state.subId);
+  return `<div class="modal" onclick="if(event.target===this)closeModal()"><div class="modalbox"><div class="itemtop"><div class="title">Ajouter un agent — ${esc(s?s.name:"")}</div><button class="outline" onclick="closeModal()">✕</button></div><div class="formgrid"><input id="subAgentFirst" class="field" placeholder="Prénom *"><input id="subAgentLast" class="field" placeholder="Nom *"><input id="subAgentCard" class="field" placeholder="N° carte professionnelle *"><label class="small">Date de fin de validité *</label><input id="subAgentExpiry" class="field" type="date"><input id="subAgentPhone" class="field" placeholder="Téléphone" type="tel"><input id="subAgentEmail" class="field" placeholder="E-mail" type="email"><select id="subAgentSub" class="field"><option value="${state.subId}">${esc(s?s.name:"")}</option></select></div><button class="primary" style="width:100%;margin-top:12px" onclick="saveSubAgent()">CRÉER L'AGENT</button></div></div>`;
+ }
+ if(state.modal==="assignsub"){
+  const a=subAgentsData.find(x=>x.id===state.subAgentId);
+  return `<div class="modal" onclick="if(event.target===this)closeModal()"><div class="modalbox"><div class="itemtop"><div class="title">Affecter ${esc(a?a.first+" "+a.last:"")} aux sites</div><button class="outline" onclick="closeModal()">✕</button></div><div class="list" style="margin-top:14px">${sitesData.map(s=>`<label class="item" style="display:flex;align-items:center;gap:10px"><input type="checkbox" name="subSite" value="${s.id}" ${(a&&a.sites.includes(s.id))?"checked":""}><span><strong>${esc(s.name)} — ${esc(s.city)}</strong><br><span class="small">Client : ${esc((clientsData.find(c=>c.id===Number(s.clientId))||{}).name||"")}</span></span></label>`).join("")}</div><button class="primary" style="width:100%;margin-top:12px" onclick="saveSubAssignment()">ENREGISTRER LES AFFECTATIONS</button></div></div>`;
+ }
+
+ if(state.modal==="client"){
+  const x=state.editIndex!=null?clientsData[state.editIndex]:{name:"",contact:"",phone:"",email:""};
+  return `<div class="modal" onclick="if(event.target===this)closeModal()"><div class="modalbox"><div class="itemtop"><div class="title">${state.editIndex!=null?"Modifier le client":"Créer un client"}</div><button class="outline" onclick="closeModal()">✕</button></div><div class="formgrid"><input id="clientName" class="field" placeholder="Nom / entreprise *" value="${esc(x.name)}"><input id="clientContact" class="field" placeholder="Contact responsable" value="${esc(x.contact)}"><input id="clientPhone" class="field" placeholder="Téléphone" value="${esc(x.phone)}" type="tel"><input id="clientEmail" class="field" placeholder="E-mail" value="${esc(x.email)}" type="email"></div><button class="primary" style="width:100%;margin-top:12px" onclick="submitClient()">${state.editIndex!=null?"ENREGISTRER":"CRÉER LE CLIENT"}</button></div></div>`;
+ }
+
  const t=state.modal, editing=state.editIndex!=null;
  if(t==="site"){
-  const x=editing?sitesData[state.editIndex]:{name:"",city:"",address:"",type:"Site client",instructions:""};
-  return `<div class="modal" onclick="if(event.target===this)closeModal()"><div class="modalbox"><div class="itemtop"><div class="title">${editing?"Modifier le site":"Créer un site"}</div><button class="outline" onclick="closeModal()">✕</button></div><div class="formgrid"><input id="siteName" class="field" placeholder="Nom du site *" value="${esc(x.name)}"><input id="siteCity" class="field" placeholder="Ville *" value="${esc(x.city)}"><input id="siteAddress" class="field" placeholder="Adresse complète" value="${esc(x.address)}"><select id="siteType" class="field"><option>Site client</option><option>Centre commercial</option><option>Entrepôt</option><option>Hôtel</option><option>Chantier</option><option>Résidence</option><option>Autre</option></select><textarea id="siteInstructions" class="field" rows="4" placeholder="Consignes du site">${esc(x.instructions)}</textarea></div><button class="primary" style="width:100%;margin-top:12px" onclick="submitEntity('site')">${editing?"ENREGISTRER":"CRÉER LE SITE"}</button></div></div>`;
+  const x=editing?sitesData[state.editIndex]:{name:"",city:"",address:"",type:"Site client",clientId:"",instructions:""};
+  return `<div class="modal" onclick="if(event.target===this)closeModal()"><div class="modalbox"><div class="itemtop"><div class="title">${editing?"Modifier le site":"Créer un site"}</div><button class="outline" onclick="closeModal()">✕</button></div><div class="formgrid"><input id="siteName" class="field" placeholder="Nom du site *" value="${esc(x.name)}"><select id="siteClient" class="field"><option value="">Choisir le client *</option>${clientsData.map(c=>`<option value="${c.id}" ${Number(x.clientId)===c.id?"selected":""}>${esc(c.name)}</option>`).join("")}</select><input id="siteCity" class="field" placeholder="Ville *" value="${esc(x.city)}"><input id="siteAddress" class="field" placeholder="Adresse complète" value="${esc(x.address)}"><select id="siteType" class="field"><option>Site client</option><option>Centre commercial</option><option>Entrepôt</option><option>Hôtel</option><option>Chantier</option><option>Résidence</option><option>Autre</option></select><textarea id="siteInstructions" class="field" rows="4" placeholder="Consignes du site">${esc(x.instructions)}</textarea></div><button class="primary" style="width:100%;margin-top:12px" onclick="submitEntity('site')">${editing?"ENREGISTRER":"CRÉER LE SITE"}</button></div></div>`;
  }
  if(t==="agent"){
-  const x=editing?agentsData[state.editIndex]:{first:"",last:"",phone:"",email:"",card:"Valide",site:""};
-  return `<div class="modal" onclick="if(event.target===this)closeModal()"><div class="modalbox"><div class="itemtop"><div class="title">${editing?"Modifier l'agent":"Créer un agent"}</div><button class="outline" onclick="closeModal()">✕</button></div><div class="formgrid"><input id="agentFirst" class="field" placeholder="Prénom *" value="${esc(x.first)}"><input id="agentLast" class="field" placeholder="Nom *" value="${esc(x.last)}"><input id="agentPhone" class="field" placeholder="Téléphone" value="${esc(x.phone)}" type="tel"><input id="agentEmail" class="field" placeholder="E-mail" value="${esc(x.email)}" type="email"><select id="agentCard" class="field"><option ${x.card==="Valide"?"selected":""}>Valide</option><option ${x.card==="28 jours"?"selected":""}>28 jours</option><option>60 jours</option><option>Expirée</option></select><select id="agentSite" class="field"><option value="">Aucun site affecté</option>${sitesData.map(s=>`<option ${x.site===s.name+" — "+s.city?"selected":""}>${esc(s.name)} — ${esc(s.city)}</option>`).join("")}</select></div><button class="primary" style="width:100%;margin-top:12px" onclick="submitEntity('agent')">${editing?"ENREGISTRER":"CRÉER L'AGENT"}</button></div></div>`;
+  const x=editing?agentsData[state.editIndex]:{first:"",last:"",phone:"",email:"",card:"Valide",cardNumber:"",site:""};
+  return `<div class="modal" onclick="if(event.target===this)closeModal()"><div class="modalbox"><div class="itemtop"><div class="title">${editing?"Modifier l'agent":"Créer un agent"}</div><button class="outline" onclick="closeModal()">✕</button></div><div class="formgrid"><input id="agentFirst" class="field" placeholder="Prénom *" value="${esc(x.first)}"><input id="agentLast" class="field" placeholder="Nom *" value="${esc(x.last)}"><input id="agentCardNumber" class="field" placeholder="N° de carte professionnelle *" value="${esc(x.cardNumber||"")}" autocomplete="off"><label class="small">Date de fin de validité de la carte professionnelle *</label><input id="agentCardExpiry" class="field" type="date" value="${esc(x.cardExpiry||"")}"><input id="agentPhone" class="field" placeholder="Téléphone" value="${esc(x.phone)}" type="tel"><input id="agentEmail" class="field" placeholder="E-mail" value="${esc(x.email)}" type="email"><select id="agentCard" class="field"><option ${x.card==="Valide"?"selected":""}>Valide</option><option ${x.card==="28 jours"?"selected":""}>28 jours</option><option>60 jours</option><option>Expirée</option></select><select id="agentSite" class="field"><option value="">Aucun site affecté</option>${sitesData.map(s=>`<option ${x.site===s.name+" — "+s.city?"selected":""}>${esc(s.name)} — ${esc(s.city)}</option>`).join("")}</select></div><button class="primary" style="width:100%;margin-top:12px" onclick="submitEntity('agent')">${editing?"ENREGISTRER":"CRÉER L'AGENT"}</button></div></div>`;
  }
  if(t==="sub"){
   const x=editing?subcontractorsData[state.editIndex]:{name:"",contact:"",phone:"",email:""};
@@ -172,16 +225,33 @@ function planning(){return `<div class="eyebrow">ORGANISATION</div><div class="h
 ${["18:00–06:00 • Centre commercial • Ahmed B. — SECURIAN","06:00–18:00 • Entrepôt • Karim D. — SECURIAN","18:00–06:00 • Hôtel • Mohamed — PROTECT PLUS"].map(x=>`<div class="item"><strong>${x}</strong><div class="small">Affectation • Consignes • Pointage</div></div>`).join("")}</div>
 <div class="card" style="margin-top:14px"><div class="title">🔄 Besoin d'un remplaçant ?</div><div class="muted">Recherche par disponibilité, qualification, validité des documents et proximité.</div><button class="primary" style="margin-top:12px" onclick="toast('Recherche de remplaçants lancée')">RECHERCHER</button></div>`}
 function pointage(){return `<div class="eyebrow">PRÉSENCE</div><div class="h1">Pointage</div><div class="card"><div style="font-size:38px">📍</div><div class="title">Centre commercial — Montpellier</div><div class="muted">La géolocalisation est utilisée uniquement pour le pointage et le service.</div><button class="primary" style="width:100%;margin-top:18px" onclick="toast('Service démarré • position enregistrée')">DÉMARRER MON SERVICE</button><button class="outline" style="width:100%;margin-top:9px" onclick="toast('Service terminé • pointage enregistré')">TERMINER MON SERVICE</button><button class="darkbtn" style="width:100%;margin-top:9px" onclick="waze('Centre commercial Montpellier')">🧭 ITINÉRAIRE WAZE</button></div>`}
+
+function openClient(){if(!requireDirection())return;state.modal="client";state.editType=null;state.editIndex=null;render()}
+function editClient(i){if(!requireDirection())return;state.modal="client";state.editType="client";state.editIndex=i;render()}
+function removeClient(i){if(!requireDirection())return;if(sitesData.some(s=>Number(s.clientId)===clientsData[i].id)){toast("Impossible : ce client possède encore un site");return}if(!confirm("Supprimer ce client ?"))return;clientsData.splice(i,1);saveData();render()}
+function submitClient(){
+ if(!requireDirection())return;
+ const name=esc(document.getElementById("clientName").value.trim()),contact=esc(document.getElementById("clientContact").value.trim()),phone=esc(document.getElementById("clientPhone").value.trim()),email=esc(document.getElementById("clientEmail").value.trim());
+ if(!name){toast("Nom du client obligatoire");return}
+ const obj={id:Date.now(),name,contact,phone,email,status:"Actif"};
+ if(state.editType==="client"&&state.editIndex!=null)clientsData[state.editIndex]={...clientsData[state.editIndex],...obj,id:clientsData[state.editIndex].id};
+ else clientsData.push(obj);
+ state.modal=null;state.editType=null;state.editIndex=null;saveData();toast("Client enregistré");render();
+}
+function clients(){
+ if(!canManage())return `<div class="eyebrow">CLIENTS</div><div class="h1">Clients</div><div class="muted">Accès réservé à la Direction.</div>`;
+ return `<div class="eyebrow">COMMERCIAL</div><div class="h1">Clients</div><div class="muted">Créez vos clients puis rattachez leurs sites.</div><button class="primary" style="width:100%;margin-top:14px" onclick="openClient()">➕ CRÉER UN CLIENT</button><div class="section">${clientsData.length} client(s)</div><div class="list">${clientsData.map((c,i)=>`<div class="item"><div class="itemtop"><strong>👤 ${esc(c.name)}</strong><span class="badge ok">${esc(c.status)}</span></div><div class="small">${c.contact?esc(c.contact)+" • ":""}${c.phone?"📞 "+esc(c.phone):""} ${c.email?"• ✉️ "+esc(c.email):""}</div><div class="small">🏢 ${sitesData.filter(s=>Number(s.clientId)===c.id).length} site(s)</div><div class="row"><button class="outline" onclick="editClient(${i})">Modifier</button><button class="danger" onclick="removeClient(${i})">Supprimer</button></div></div>`).join("")}</div>`
+}
 function sites(){
 const can=canManage();
 return `<div class="eyebrow">OPÉRATIONS</div><div class="h1">Sites</div><div class="muted">Créez vos sites clients, leurs adresses et leurs consignes.</div>
 ${can?`<button class="primary" style="width:100%;margin-top:14px" onclick="openCreate('site')">➕ CRÉER UN SITE</button>`:""}
-<div class="section">${sitesData.length} site(s)</div><div class="list">${sitesData.map((x,i)=>`<div class="item"><div class="itemtop"><strong>🏢 ${esc(x.name)} — ${esc(x.city)}</strong><span class="badge ok">${esc(x.status)}</span></div><div class="small">${esc(x.type)} • ${esc(x.address||"Adresse non renseignée")}</div><div class="small" style="margin-top:7px">📋 ${esc(x.instructions||"Aucune consigne renseignée")}</div><div class="row"><button class="darkbtn" onclick="waze('${esc(x.address||x.name+" "+x.city)}')">🧭 Waze</button>${can?`<button class="outline" onclick="editSite(${i})">Modifier</button><button class="danger" onclick="removeSite(${i})">Supprimer</button>`:""}</div></div>`).join("")}</div>`}
+<div class="section">${sitesData.length} site(s)</div><div class="list">${sitesData.map((x,i)=>`<div class="item"><div class="itemtop"><strong>🏢 ${esc(x.name)} — ${esc(x.city)}</strong><span class="badge ok">${esc(x.status)}</span></div><div class="small">👤 Client : ${esc((clientsData.find(c=>c.id===Number(x.clientId))||{}).name||"Non renseigné")}</div><div class="small">${esc(x.type)} • ${esc(x.address||"Adresse non renseignée")}</div><div class="small" style="margin-top:7px">📋 ${esc(x.instructions||"Aucune consigne renseignée")}</div><div class="row"><button class="darkbtn" onclick="waze('${esc(x.address||x.name+" "+x.city)}')">🧭 Waze</button>${can?`<button class="outline" onclick="editSite(${i})">Modifier</button><button class="danger" onclick="removeSite(${i})">Supprimer</button>`:""}</div></div>`).join("")}</div>`}
 function agents(){
 const can=canManage();
 return `<div class="eyebrow">RESSOURCES HUMAINES</div><div class="h1">${state.role==="sous"?"Mes agents":"Agents"}</div><div class="muted">Fiches agents, carte professionnelle, coordonnées et affectations.</div>
 ${can?`<button class="primary" style="width:100%;margin-top:14px" onclick="openCreate('agent')">➕ CRÉER UN AGENT</button>`:""}
-<div class="section">${agentsData.length} agent(s)</div><div class="list">${agentsData.map((x,i)=>`<div class="item"><div class="itemtop"><strong>👮 ${esc(x.first)} ${esc(x.last)}</strong><span class="badge ${x.card==="Valide"?"ok":x.card==="Expirée"?"danger":"warn"}">${esc(x.card)}</span></div><div class="small">${esc(x.type)} • ${esc(x.status)}</div><div class="small">${x.phone?"📞 "+esc(x.phone):"📞 Non renseigné"} • ${x.email?"✉️ "+esc(x.email):"✉️ Non renseigné"}</div><div class="small">🏢 ${esc(x.site||"Aucun site affecté")}</div>${can?`<div class="row"><button class="outline" onclick="editAgent(${i})">Modifier</button><button class="danger" onclick="removeAgent(${i})">Supprimer</button></div>`:""}</div>`).join("")}</div>`}
+<div class="section">${agentsData.length} agent(s)</div><div class="list">${agentsData.map((x,i)=>`<div class="item"><div class="itemtop"><strong>👮 ${esc(x.first)} ${esc(x.last)}</strong><span class="badge ${cardBadge(x.cardExpiry).cls}">${cardBadge(x.cardExpiry).label}</span></div><div class="small">${esc(x.type)} • ${esc(x.status)}</div><div class="small">🪪 N° ${esc(x.cardNumber||"Non renseigné")} • Fin de validité : ${x.cardExpiry?esc(new Date(x.cardExpiry+"T00:00:00").toLocaleDateString("fr-FR")):"Non renseignée"}</div><div class="small">${x.phone?"📞 "+esc(x.phone):"📞 Non renseigné"} • ${x.email?"✉️ "+esc(x.email):"✉️ Non renseigné"}</div><div class="small">🏢 ${esc(x.site||"Aucun site affecté")}</div>${can?`<div class="row"><button class="outline" onclick="editAgent(${i})">Modifier</button><button class="danger" onclick="removeAgent(${i})">Supprimer</button></div>`:""}</div>`).join("")}</div>`}
 function createAccount(){
 const name=document.getElementById("accName").value.trim();
 const email=document.getElementById("accEmail").value.trim();
@@ -200,11 +270,68 @@ accounts.splice(i,1);
 localStorage.setItem("securian_accounts",JSON.stringify(accounts));
 render();
 }
+
+function subDocKey(subId,doc){return String(subId)+"::"+doc}
+function subDocStatus(subId,doc){return !!subDocsData[subDocKey(subId,doc)]}
+function toggleSubDoc(subId,doc){
+ if(!requireDirection())return;
+ const k=subDocKey(subId,doc);
+ if(subDocsData[k]) delete subDocsData[k]; else subDocsData[k]={uploadedAt:new Date().toISOString()};
+ saveData();render();
+}
+function openSubDetail(i){
+ if(!requireDirection())return;
+ state.modal="subdetail";state.editIndex=i;render();
+}
+function openCreateSubAgent(subId){
+ if(!requireDirection())return;
+ state.modal="subagent";state.editIndex=null;state.subId=subId;render();
+}
+function assignSubAgent(agentId){
+ if(!requireDirection())return;
+ const a=subAgentsData.find(x=>x.id===agentId); if(!a)return;
+ state.modal="assignsub";state.subAgentId=agentId;render();
+}
+function saveSubAgent(){
+ if(!requireDirection())return;
+ const subId=Number(document.getElementById("subAgentSub").value), first=esc(document.getElementById("subAgentFirst").value.trim()), last=esc(document.getElementById("subAgentLast").value.trim()), phone=esc(document.getElementById("subAgentPhone").value.trim()), email=esc(document.getElementById("subAgentEmail").value.trim()), cardNumber=esc(document.getElementById("subAgentCard").value.trim()), cardExpiry=esc(document.getElementById("subAgentExpiry").value);
+ if(!first||!last||!cardNumber||!cardExpiry){toast("Nom, prénom, carte et échéance sont obligatoires");return}
+ subAgentsData.push({id:Date.now(),subId,first,last,phone,email,cardNumber,cardExpiry,status:"Actif",sites:[]});
+ const s=subcontractorsData.find(x=>x.id===subId); if(s)s.agents=subAgentsData.filter(a=>a.subId===subId).length;
+ state.modal=null;saveData();toast("Agent sous-traitant créé");render();
+}
+function saveSubAssignment(){
+ if(!requireDirection())return;
+ const a=subAgentsData.find(x=>x.id===state.subAgentId); if(!a)return;
+ const checks=[...document.querySelectorAll('input[name="subSite"]:checked')].map(x=>Number(x.value));
+ a.sites=checks;state.modal="subdetail";saveData();toast("Affectations enregistrées");render();
+}
+function removeSubAgent(id){
+ if(!requireDirection())return;
+ if(!confirm("Retirer cet agent du sous-traitant ?"))return;
+ subAgentsData=subAgentsData.filter(a=>a.id!==id);
+ subcontractorsData.forEach(s=>s.agents=subAgentsData.filter(a=>a.subId===s.id).length);
+ saveData();render();
+}
+function subDetailHTML(){
+ const s=subcontractorsData[state.editIndex]; if(!s)return "";
+ const docs=SUB_DOCS.map(d=>`<div class="item"><div class="itemtop"><strong>📄 ${esc(d)}</strong><span class="badge ${subDocStatus(s.id,d)?"ok":"danger"}">${subDocStatus(s.id,d)?"FOURNI":"MANQUANT"}</span></div><div class="row"><button class="${subDocStatus(s.id,d)?"outline":"primary"}" onclick="toggleSubDoc(${s.id},'${esc(d)}')">${subDocStatus(s.id,d)?"Marquer manquant":"Document reçu"}</button></div></div>`).join("");
+ const agents=subAgentsData.filter(a=>a.subId===s.id);
+ return `<div class="modal" onclick="if(event.target===this)closeModal()"><div class="modalbox"><div class="itemtop"><div class="title">🤝 ${esc(s.name)}</div><button class="outline" onclick="closeModal()">✕</button></div>
+ <div class="pillbar"><span class="pill sel">Documents</span><span class="pill">Salariés</span></div>
+ <div class="section">Documents obligatoires</div><div class="list">${docs}</div>
+ <div class="section">Salariés / agents du sous-traitant</div><button class="primary" style="width:100%;margin-bottom:10px" onclick="openCreateSubAgent(${s.id})">➕ AJOUTER UN AGENT</button>
+ <div class="list">${agents.length?agents.map(a=>`<div class="item"><div class="itemtop"><strong>👷 ${esc(a.first)} ${esc(a.last)}</strong><span class="badge ok">${esc(a.status)}</span></div><div class="small">🪪 ${esc(a.cardNumber)} • Échéance ${esc(a.cardExpiry)}</div><div class="small">📍 ${a.sites.length? a.sites.map(id=>{const q=sitesData.find(x=>x.id===id);return q?esc(q.name+" — "+q.city):""}).filter(Boolean).join(", "):"Aucun site affecté"}</div><div class="row"><button class="outline" onclick="assignSubAgent(${a.id})">Affecter aux sites</button><button class="danger" onclick="removeSubAgent(${a.id})">Retirer</button></div></div>`).join(""):`<div class="item"><strong>Aucun agent enregistré</strong></div>`}</div>
+ </div></div>`;
+}
 function sous(){
 const can=canManage();
-return `<div class="eyebrow">PARTENAIRES</div><div class="h1">Sous-traitants</div><div class="muted">Entreprises partenaires et leurs responsables.</div>
+return `<div class="eyebrow">PARTENAIRES</div><div class="h1">Sous-traitants</div><div class="muted">Gérez les entreprises, leurs documents obligatoires et leurs agents affectables sur vos sites.</div>
 ${can?`<button class="primary" style="width:100%;margin-top:14px" onclick="openCreate('sub')">➕ CRÉER UN SOUS-TRAITANT</button>`:""}
-<div class="section">${subcontractorsData.length} partenaire(s)</div><div class="list">${subcontractorsData.map((x,i)=>`<div class="item"><div class="itemtop"><strong>🤝 ${esc(x.name)}</strong><span class="badge ok">${esc(x.status)}</span></div><div class="small">${x.contact?esc(x.contact)+" • ":""}${x.agents} agent(s)</div><div class="small">${x.phone?"📞 "+esc(x.phone):"📞 Non renseigné"} • ${x.email?"✉️ "+esc(x.email):"✉️ Non renseigné"}</div>${can?`<div class="row"><button class="outline" onclick="editSub(${i})">Modifier</button><button class="danger" onclick="removeSub(${i})">Supprimer</button></div>`:""}</div>`).join("")}</div>`}
+<div class="section">${subcontractorsData.length} partenaire(s)</div><div class="list">${subcontractorsData.map((x,i)=>{
+ const missing=SUB_DOCS.filter(d=>!subDocStatus(x.id,d)).length;
+ const agents=subAgentsData.filter(a=>a.subId===x.id);
+ return `<div class="item"><div class="itemtop"><strong>🤝 ${esc(x.name)}</strong><span class="badge ${missing?"warn":"ok"}">${missing?missing+" document(s) manquant(s)":"DOSSIER COMPLET"}</span></div><div class="small">${x.contact?esc(x.contact)+" • ":""}${agents.length} agent(s)</div><div class="small">${x.phone?"📞 "+esc(x.phone):"📞 Non renseigné"} • ${x.email?"✉️ "+esc(x.email):"✉️ Non renseigné"}</div>${can?`<div class="row"><button class="primary" onclick="openSubDetail(${i})">Ouvrir le dossier</button><button class="outline" onclick="editSub(${i})">Modifier</button><button class="danger" onclick="removeSub(${i})">Supprimer</button></div>`:""}</div>`}).join("")}</div>`}
 
 function docs(){return `<div class="eyebrow">CONFORMITÉ</div><div class="h1">Documents & alertes</div><div class="card"><div>🔴 <b>1</b> document expiré</div><div style="margin-top:10px">🟠 <b>2</b> échéances à 30 jours</div><div style="margin-top:10px">🟢 <b>64</b> documents conformes</div></div><div class="section">Rappels automatiques</div><div class="list">${["Carte professionnelle CNAPS","MAC / recyclage","SST","Assurance sous-traitant"].map((x,i)=>`<div class="item"><strong>${x}</strong><div class="small">${i===0?"Alerte 30 jours • 60 jours • 90 jours":"Suivi d'échéance activé"}</div></div>`).join("")}</div>`}
 function maincourante(){return `<div class="eyebrow">TRANSMISSIONS</div><div class="h1">Main courante</div><div class="card"><div class="title">Nouvelle transmission</div><div class="muted">Événement • Observation • Photo • Heure • Site • Agent</div><button class="primary" style="width:100%;margin-top:16px" onclick="toast('Formulaire de transmission ouvert')">NOUVELLE TRANSMISSION</button></div><div class="section">Dernières transmissions</div><div class="list"><div class="item"><strong>22:14 — Ronde effectuée</strong><div class="small">Centre commercial • Ahmed B.</div></div><div class="item"><strong>20:05 — Porte contrôlée</strong><div class="small">Entrepôt • Karim D.</div></div></div>`}
