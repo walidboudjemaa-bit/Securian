@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="theme-color" content="#060A12">
-<title>SECURIAN — V1.1</title>
+<title>SECURIAN — V1.2</title>
 <style>
 :root{--gold:#f3b51b;--navy:#102f68;--bg:#060a12;--card:#101722;--line:#1b2635;--text:#f7f9fc;--muted:#94a0b5;--ok:#65d89a;--danger:#ff6b6b;--warn:#ffc857}
 *{box-sizing:border-box}body{margin:0;background:#03060b;color:var(--text);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial,sans-serif}
@@ -14,7 +14,7 @@
 .content{padding:18px}.eyebrow{color:var(--gold);font-size:11px;font-weight:800;letter-spacing:1.3px}.h1{font-size:27px;font-weight:850;margin:4px 0 4px}.muted{color:var(--muted);font-size:13px;line-height:1.5}
 .grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:18px}.stat,.card{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:15px}.stat .num{font-size:27px;font-weight:900;margin:7px 0 2px}.stat .label{color:var(--muted);font-size:12px}
 .section{font-size:18px;font-weight:800;margin:24px 0 10px}.card{margin-bottom:12px}.title{font-size:16px;font-weight:800;margin-bottom:5px}.row{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:14px}
-button,.btn{border:0;border-radius:11px;padding:12px 14px;font-weight:800;cursor:pointer}.primary{background:var(--gold);color:#07101e}.darkbtn{background:var(--navy);color:#fff}.outline{background:transparent;color:#fff;border:1px solid #3a4658}.danger{background:#5b1f27;color:#ffd9dd}.badge{padding:7px 9px;border-radius:8px;font-size:10px;font-weight:900}.ok{background:#173d2d;color:var(--ok)}.warn{background:#4b3a12;color:var(--warn)}.bad{background:#4b1d24;color:#ff8c95}
+button,.btn{border:0;border-radius:11px;padding:12px 14px;font-weight:800;cursor:pointer}.field{width:100%;background:#0b111b;color:#fff;border:1px solid #2a3748;border-radius:11px;padding:13px;font-size:14px;outline:none}.field:focus{border-color:var(--gold)}.primary{background:var(--gold);color:#07101e}.darkbtn{background:var(--navy);color:#fff}.outline{background:transparent;color:#fff;border:1px solid #3a4658}.danger{background:#5b1f27;color:#ffd9dd}.badge{padding:7px 9px;border-radius:8px;font-size:10px;font-weight:900}.ok{background:#173d2d;color:var(--ok)}.warn{background:#4b3a12;color:var(--warn)}.bad{background:#4b1d24;color:#ff8c95}
 .list{display:flex;flex-direction:column;gap:9px}.item{background:#0c121c;border:1px solid var(--line);border-radius:13px;padding:13px}.itemtop{display:flex;justify-content:space-between;gap:10px}.item strong{font-size:14px}.small{font-size:12px;color:var(--muted);margin-top:4px}
 .nav{position:fixed;bottom:0;left:50%;transform:translateX(-50%);width:min(520px,100%);background:rgba(9,14,23,.98);border-top:1px solid var(--line);display:grid;grid-template-columns:repeat(5,1fr);z-index:20;padding-bottom:env(safe-area-inset-bottom)}
 .nav button{background:transparent;color:#aeb8c8;border-radius:0;padding:10px 4px 9px;font-size:10px}.nav button.active{color:var(--gold)}.nav .ico{font-size:19px;display:block;margin-bottom:3px}
@@ -35,6 +35,7 @@ const roles={
  agentext:{label:"Agent sous-traitant",name:"Mohamed",dash:false}
 };
 let state={role:"direction",screen:"dashboard"};
+let accounts=JSON.parse(localStorage.getItem("securian_accounts")||"[]");
 const icons={dashboard:"⌂",planning:"▣",pointage:"⌖",sites:"⌂",agents:"♙",sous:"♙",docs:"▤",main:"☷",incidents:"⚠"};
 
 function toast(t){const e=document.getElementById("toast");e.textContent=t;e.style.display="block";setTimeout(()=>e.style.display="none",1800)}
@@ -55,7 +56,8 @@ function doLogin(){state.role=document.getElementById("role").value;state.screen
 function navItems(){
 let base=[["planning","Planning"],["pointage","Pointage"],["sites","Sites"]];
 if(roles[state.role].dash) base.unshift(["dashboard","Accueil"]);
-if(state.role==="direction"||state.role==="cadre"){base.push(["agents","Agents"],["sous","Sous-traitants"],["docs","Documents"],["incidents","Incidents"])}
+if(state.role==="direction"){base.push(["agents","Agents"],["sous","Sous-traitants"],["accounts","Comptes"],["docs","Documents"],["incidents","Incidents"])}
+else if(state.role==="cadre"){base.push(["agents","Agents"],["sous","Sous-traitants"],["docs","Documents"],["incidents","Incidents"])}
 else if(state.role==="sous"){base.push(["agents","Mes agents"],["docs","Documents"])}
 else base.push(["main","Main courante"],["incidents","Incidents"]);
 return base;
@@ -76,6 +78,7 @@ case"planning":return planning();
 case"pointage":return pointage();
 case"sites":return sites();
 case"agents":return agents();
+case"accounts":return accountsScreen();
 case"sous":return sous();
 case"docs":return docs();
 case"main":return maincourante();
@@ -92,6 +95,52 @@ ${["18:00–06:00 • Centre commercial • Ahmed B. — SECURIAN","06:00–18:0
 function pointage(){return `<div class="eyebrow">PRÉSENCE</div><div class="h1">Pointage</div><div class="card"><div style="font-size:38px">📍</div><div class="title">Centre commercial — Montpellier</div><div class="muted">La géolocalisation est utilisée uniquement pour le pointage et le service.</div><button class="primary" style="width:100%;margin-top:18px" onclick="toast('Service démarré • position enregistrée')">DÉMARRER MON SERVICE</button><button class="outline" style="width:100%;margin-top:9px" onclick="toast('Service terminé • pointage enregistré')">TERMINER MON SERVICE</button><button class="darkbtn" style="width:100%;margin-top:9px" onclick="waze('Centre commercial Montpellier')">🧭 ITINÉRAIRE WAZE</button></div>`}
 function sites(){return `<div class="eyebrow">OPÉRATIONS</div><div class="h1">Sites</div><div class="list">${["Centre commercial — Montpellier","Entrepôt — Sète","Hôtel — Béziers"].map(x=>`<div class="item"><div class="itemtop"><strong>${x}</strong><span class="badge ok">ACTIF</span></div><div class="small">Consignes • Planning • Agents affectés</div><div class="row"><button class="darkbtn" onclick="waze('${x}')">🧭 Waze</button><button class="outline" onclick="toast('Consignes ouvertes')">Consignes</button></div></div>`).join("")}</div>`}
 function agents(){return `<div class="eyebrow">RESSOURCES HUMAINES</div><div class="h1">${state.role==="sous"?"Mes agents":"Agents"}</div><div class="list">${["Ahmed B.","Karim D.","Sofiane M.","Mohamed — PROTECT PLUS"].map((x,i)=>`<div class="item"><div class="itemtop"><strong>${x}</strong><span class="badge ${i===1?'warn':'ok'}">${i===1?'28 JOURS':'VALIDE'}</span></div><div class="small">Carte pro • Formations • Planning • Sites autorisés</div></div>`).join("")}</div>`}
+function accountsScreen(){
+return `<div class="eyebrow">ADMINISTRATION</div>
+<div class="h1">Comptes utilisateurs</div>
+<div class="muted">Créez et gérez les accès des cadres et des agents depuis votre espace Direction.</div>
+
+<div class="card" style="margin-top:16px">
+<div class="title">➕ Créer un compte</div>
+<div class="muted">Le compte sera associé à un profil et à des droits d'accès.</div>
+<div style="margin-top:14px;display:flex;flex-direction:column;gap:9px">
+<input id="accName" placeholder="Nom et prénom" class="field">
+<input id="accEmail" placeholder="E-mail / identifiant" class="field" type="email">
+<select id="accRole" class="field">
+<option value="cadre">Cadre / Responsable</option>
+<option value="salarie">Agent SECURIAN</option>
+<option value="sous">Responsable sous-traitant</option>
+<option value="agentext">Agent sous-traitant</option>
+</select>
+<input id="accPassword" placeholder="Mot de passe temporaire" class="field" type="text">
+<button class="primary" onclick="createAccount()">CRÉER LE COMPTE</button>
+</div></div>
+
+<div class="section">Comptes créés</div>
+<div class="list">
+${accounts.length?accounts.map((a,i)=>`<div class="item"><div class="itemtop"><strong>${a.name}</strong><span class="badge ok">${a.roleLabel}</span></div><div class="small">${a.email} • Compte actif</div><div class="row"><button class="outline" onclick="toast('Modification du compte ${i+1} à connecter')">Modifier</button><button class="danger" onclick="deleteAccount(${i})">Supprimer</button></div></div>`).join(""):`<div class="item"><strong>Aucun compte supplémentaire</strong><div class="small">Créez le premier compte cadre ou agent ci-dessus.</div></div>`}
+</div>
+
+<div class="card" style="margin-top:14px"><div class="title">🔐 Droits d'accès</div><div class="small">Direction : accès complet • Cadre : gestion opérationnelle • Agent : planning, pointage, sites et consignes • Sous-traitant : uniquement son périmètre.</div></div>`;
+}
+function createAccount(){
+const name=document.getElementById("accName").value.trim();
+const email=document.getElementById("accEmail").value.trim();
+const role=document.getElementById("accRole").value;
+const password=document.getElementById("accPassword").value.trim();
+if(!name||!email||!password){toast("Veuillez remplir tous les champs");return}
+const labels={cadre:"CADRE",salarie:"AGENT SECURIAN",sous:"SOUS-TRAITANT",agentext:"AGENT SOUS-TRAITANT"};
+accounts.push({name,email,password,role,roleLabel:labels[role]});
+localStorage.setItem("securian_accounts",JSON.stringify(accounts));
+toast("Compte créé avec succès");
+render();
+}
+function deleteAccount(i){
+if(!confirm("Supprimer ce compte ?")) return;
+accounts.splice(i,1);
+localStorage.setItem("securian_accounts",JSON.stringify(accounts));
+render();
+}
 function sous(){return `<div class="eyebrow">PARTENAIRES</div><div class="h1">Sous-traitants</div><div class="list">${["PROTECT PLUS — 8 agents","SECURITY PARTNER — 5 agents","SUD PROTECTION — 11 agents"].map((x,i)=>`<div class="item"><div class="itemtop"><strong>${x}</strong><span class="badge ${i===2?'warn':'ok'}">${i===2?'ÉCHÉANCE':'ACTIF'}</span></div><div class="small">Contrat • Assurances • Documents • Agents • Sites</div></div>`).join("")}</div>`}
 function docs(){return `<div class="eyebrow">CONFORMITÉ</div><div class="h1">Documents & alertes</div><div class="card"><div>🔴 <b>1</b> document expiré</div><div style="margin-top:10px">🟠 <b>2</b> échéances à 30 jours</div><div style="margin-top:10px">🟢 <b>64</b> documents conformes</div></div><div class="section">Rappels automatiques</div><div class="list">${["Carte professionnelle CNAPS","MAC / recyclage","SST","Assurance sous-traitant"].map((x,i)=>`<div class="item"><strong>${x}</strong><div class="small">${i===0?"Alerte 30 jours • 60 jours • 90 jours":"Suivi d'échéance activé"}</div></div>`).join("")}</div>`}
 function maincourante(){return `<div class="eyebrow">TRANSMISSIONS</div><div class="h1">Main courante</div><div class="card"><div class="title">Nouvelle transmission</div><div class="muted">Événement • Observation • Photo • Heure • Site • Agent</div><button class="primary" style="width:100%;margin-top:16px" onclick="toast('Formulaire de transmission ouvert')">NOUVELLE TRANSMISSION</button></div><div class="section">Dernières transmissions</div><div class="list"><div class="item"><strong>22:14 — Ronde effectuée</strong><div class="small">Centre commercial • Ahmed B.</div></div><div class="item"><strong>20:05 — Porte contrôlée</strong><div class="small">Entrepôt • Karim D.</div></div></div>`}
