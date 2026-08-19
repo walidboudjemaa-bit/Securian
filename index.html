@@ -36,7 +36,7 @@ const roles={
  sous:{label:"Responsable sous-traitant",name:"PROTECT PLUS",dash:false},
  agentext:{label:"Agent sous-traitant",name:"Mohamed",dash:false}
 };
-let state={role:"direction",screen:"dashboard",modal:null,editType:null,editIndex:null};
+let state={role:"direction",screen:"dashboard",modal:null,editType:null,editIndex:null,accountId:null};
 
 let accounts=JSON.parse(localStorage.getItem("securian_accounts")||"[]");
 let clientsData=JSON.parse(localStorage.getItem("securian_clients")||"null")||[
@@ -87,8 +87,8 @@ function cardReminder(dateStr){
 }
 
 let shiftsData=JSON.parse(localStorage.getItem("securian_shifts")||"null")||[
- {id:1,date:"2026-08-21",start:"18:00",end:"06:00",siteId:1,agentId:1,status:"Affecté",proposals:[]},
- {id:2,date:"2026-08-22",start:"06:00",end:"18:00",siteId:2,agentId:null,status:"À pourvoir",proposals:[]}
+ {id:1,date:"2026-08-21",start:"18:00",end:"06:00",siteId:1,agentId:1,subcontractorId:null,subAgentId:null,status:"Affecté",proposals:[]},
+ {id:2,date:"2026-08-22",start:"06:00",end:"18:00",siteId:2,agentId:null,subcontractorId:null,subAgentId:null,status:"À pourvoir",proposals:[]}
 ];
 let proposalsData=JSON.parse(localStorage.getItem("securian_proposals")||"null")||[];
 function savePlanning(){
@@ -122,16 +122,88 @@ function variableCalc(sh){
  const holiday=holidays.includes(sh.date);
  return {hours:dur,night:night/60,sunday,holiday,panier:dur>=6?1:0,habillageHours:dur*(10/60)};
 }
+function getSubAgentName(id){
+ const a=subAgentsData.find(x=>x.id===Number(id));
+ return a?a.first+" "+a.last:"À pourvoir";
+}
+function getSubName(id){
+ const s=subcontractorsData.find(x=>x.id===Number(id));
+ return s?s.name:"";
+}
+function selectedSubAgent(id){
+ return subAgentsData.find(x=>x.id===Number(id));
+}
+function subAgentConflict(agentId,sh){
+ return shiftsData.some(x=>Number(x.subAgentId)===Number(agentId)&&overlap(x,sh));
+}
+function subAgentsFor(subId){
+ return subAgentsData.filter(a=>Number(a.subId)===Number(subId)&&a.status==="Actif" &&
+   !(cardDays(a.cardExpiry)!==null&&cardDays(a.cardExpiry)<0));
+}
+function syncShiftAssignmentUI(){
+ const subId=Number(document.getElementById("shiftSubcontractor")?.value)||0;
+ const sel=document.getElementById("shiftSubAgent");
+ if(!sel)return;
+ sel.innerHTML=`<option value="">À pourvoir / rechercher</option>`+
+   (subId?subAgentsFor(subId):[]).map(a=>`<option value="${a.id}">${esc(a.first)} ${esc(a.last)}</option>`).join("");
+}
+function syncShiftAgentOptions(){
+ const subId=Number(document.getElementById("shiftSubcontractor")?.value)||0;
+ const sel=document.getElementById("shiftAgent"); if(!sel)return;
+ if(subId){sel.value="";sel.disabled=true}else sel.disabled=false;
+}
+
+function toggleMultiShift(){
+ const on=document.getElementById("shiftMulti")?.checked;
+ const box=document.getElementById("multiShiftDates");
+ if(box) box.style.display=on?"block":"none";
+}
+function createMultiShifts(){
+ if(!requireDirection())return;
+ const startDate=document.getElementById("shiftDate").value;
+ const endDate=document.getElementById("shiftEndDate").value;
+ const start=document.getElementById("shiftStart").value, end=document.getElementById("shiftEnd").value;
+ const siteId=Number(document.getElementById("shiftSite").value);
+ const agentId=Number(document.getElementById("shiftAgent").value)||null;
+ const subcontractorId=Number(document.getElementById("shiftSubcontractor").value)||null;
+ const subAgentId=Number(document.getElementById("shiftSubAgent").value)||null;
+ const days=[...document.querySelectorAll('input[name="shiftDays"]:checked')].map(x=>Number(x.value));
+ if(!startDate||!endDate||!start||!end||!siteId){toast("Date de début, date de fin, horaires et site obligatoires");return}
+ if(new Date(endDate)<new Date(startDate)){toast("La date de fin doit être après la date de début");return}
+ if(!days.length){toast("Sélectionnez au moins un jour de la semaine");return}
+ if(subAgentId&&!subcontractorId){toast("Sélectionnez d'abord le sous-traitant");return}
+ if(agentId&&subAgentId){toast("Choisissez soit un agent SECURIAN, soit un agent sous-traitant");return}
+ const dates=[];
+ for(let d=new Date(startDate+"T00:00:00"); d<=new Date(endDate+"T00:00:00"); d.setDate(d.getDate()+1)){
+   if(days.includes(d.getDay())) dates.push(d.toISOString().slice(0,10));
+ }
+ if(!dates.length){toast("Aucune date ne correspond aux jours sélectionnés");return}
+ let added=0, conflicts=0;
+ dates.forEach(date=>{
+   const sh={id:Date.now()+added,date,start,end,siteId,agentId,subcontractorId,subAgentId,status:(agentId||subAgentId)?"Affecté":"À pourvoir",proposals:[]};
+   const conflictAgent=agentId&&shiftsData.some(x=>x.agentId===agentId&&overlap(x,sh));
+   const conflictSub=subAgentId&&subAgentConflict(subAgentId,sh);
+   if(conflictAgent||conflictSub){conflicts++;return}
+   shiftsData.push(sh);added++;
+ });
+ if(added){savePlanning();state.modal=null;toast(`${added} vacation${added>1?"s":""} créée${added>1?"s":""}${conflicts?` • ${conflicts} ignorée${conflicts>1?"s":""} pour conflit`:``}`);render()}
+ else toast("Aucune vacation créée : conflits horaires");
+}
 function createShift(){
  if(!requireDirection())return;
- const date=esc(document.getElementById("shiftDate").value),start=esc(document.getElementById("shiftStart").value),end=esc(document.getElementById("shiftEnd").value),siteId=Number(document.getElementById("shiftSite").value),agentId=Number(document.getElementById("shiftAgent").value)||null;
+ const date=esc(document.getElementById("shiftDate").value),start=esc(document.getElementById("shiftStart").value),end=esc(document.getElementById("shiftEnd").value);
+ const siteId=Number(document.getElementById("shiftSite").value);
+ const agentId=Number(document.getElementById("shiftAgent").value)||null;
+ const subcontractorId=Number(document.getElementById("shiftSubcontractor").value)||null;
+ const subAgentId=Number(document.getElementById("shiftSubAgent").value)||null;
  if(!date||!start||!end||!siteId){toast("Date, horaires et site obligatoires");return}
- const sh={id:Date.now(),date,start,end,siteId,agentId,status:agentId?"Affecté":"À pourvoir",proposals:[]};
- if(agentId){
-   const conflict=shiftsData.some(x=>x.agentId===agentId&&overlap(x,sh));
-   if(conflict){toast("Conflit horaire pour cet agent");return}
- }
- shiftsData.push(sh);savePlanning();state.modal=null;toast("Vacation créée");render();
+ if(subAgentId&&!subcontractorId){toast("Sélectionnez d'abord le sous-traitant");return}
+ if(subAgentId&&(!selectedSubAgent(subAgentId)||Number(selectedSubAgent(subAgentId).subId)!==subcontractorId)){toast("Agent sous-traitant invalide");return}
+ if(agentId&&subAgentId){toast("Choisissez soit un agent SECURIAN, soit un agent sous-traitant");return}
+ const sh={id:Date.now(),date,start,end,siteId,agentId,subcontractorId,subAgentId,status:(agentId||subAgentId)?"Affecté":"À pourvoir",proposals:[]};
+ if(agentId&&shiftsData.some(x=>x.agentId===agentId&&overlap(x,sh))){toast("Conflit horaire pour cet agent SECURIAN");return}
+ if(subAgentId&&subAgentConflict(subAgentId,sh)){toast("Conflit horaire pour cet agent sous-traitant");return}
+ shiftsData.push(sh);savePlanning();state.modal=null;toast(subAgentId?"Vacation affectée au sous-traitant et à son agent":"Vacation créée");render();
 }
 function compatibleAgents(sh){
  return agentsData.filter(a=>{
@@ -204,8 +276,14 @@ function submitEntity(type){
   if(!cardNumber){toast("Numéro de carte professionnelle obligatoire");return}
   if(!cardExpiry){toast("Date de fin de validité obligatoire");return}
   const obj={id:Date.now(),first,last,type:"Agent SECURIAN",phone,email,card,cardNumber,cardExpiry,status:"Actif",site};
-  if(state.editType==="agent" && state.editIndex!=null) agentsData[state.editIndex]={...agentsData[state.editIndex],...obj,id:agentsData[state.editIndex].id};
+  let savedAgentId=obj.id;
+  if(state.editType==="agent" && state.editIndex!=null){savedAgentId=agentsData[state.editIndex].id;agentsData[state.editIndex]={...agentsData[state.editIndex],...obj,id:savedAgentId};}
   else agentsData.push(obj);
+  if(document.getElementById("agentCreateAccount")?.checked){
+    createAgentAccessFromForm(savedAgentId);
+  } else if(state.editType==="agent"){
+    const oldAcc=accountForAgent(savedAgentId); if(oldAcc){accounts=accounts.filter(a=>a.id!==oldAcc.id);localStorage.setItem("securian_accounts",JSON.stringify(accounts));}
+  }
  }
  if(type==="sub"){
   const name=esc(document.getElementById("subName").value.trim()),contact=esc(document.getElementById("subContact").value.trim()),phone=esc(document.getElementById("subPhone").value.trim()),email=esc(document.getElementById("subEmail").value.trim());
@@ -217,7 +295,7 @@ function submitEntity(type){
  state.modal=null;state.editType=null;state.editIndex=null;saveData();toast("Enregistrement effectué");render();
 }
 
-const icons={dashboard:"⌂",planning:"▣",pointage:"⌖",sites:"⌂",agents:"♙",sous:"♙",docs:"▤",main:"☷",incidents:"⚠"};
+const icons={dashboard:"⌂",planning:"▣",pointage:"⌖",sites:"⌂",agents:"♙",sous:"♙",docs:"▤",main:"☷",incidents:"⚠",profile:"⚙"};
 
 function toast(t){const e=document.getElementById("toast");e.textContent=t;e.style.display="block";setTimeout(()=>e.style.display="none",1800)}
 function waze(q="Montpellier France"){location.href="https://waze.com/ul?q="+encodeURIComponent(q)+"&navigate=yes"}
@@ -227,20 +305,29 @@ root.innerHTML=`<div class="login"><div class="loginbox">
 <img src="${logo}"><h1>SECURIAN</h1><p>PROTÉGER • PRÉVENIR • PERFORMER</p>
 <div class="field"><label>Profil de démonstration</label><select id="role">
 <option value="direction">Direction</option><option value="cadre">Cadre / Responsable</option><option value="salarie">Salarié SECURIAN</option><option value="sous">Responsable sous-traitant</option><option value="agentext">Agent sous-traitant</option></select></div>
-<div class="field"><label>Identifiant</label><input value="demo"></div>
-<div class="field"><label>Mot de passe</label><input type="password" value="1234"></div>
+<div class="field"><label>Identifiant ou e-mail</label><input id="loginId" value="demo" autocomplete="username"></div>
+<div class="field"><label>Mot de passe</label><input id="loginPassword" type="password" value="1234" autocomplete="current-password"></div>
 <div class="row"><button class="primary" style="width:100%" onclick="doLogin()">SE CONNECTER</button></div>
 <div class="demo">Compte démo : mot de passe <b>1234</b><br>Cette version est un prototype de test : aucune donnée réelle n'est envoyée.</div>
 </div></div>`
 }
-function doLogin(){state.role=document.getElementById("role").value;state.screen=roles[state.role].dash?"dashboard":"planning";render()}
+function doLogin(){
+ const roleEl=document.getElementById("role"), idEl=document.getElementById("loginId"), pwEl=document.getElementById("loginPassword");
+ const role=roleEl.value, ident=(idEl?.value||"").trim(), pw=(pwEl?.value||"").trim();
+ const acc=accounts.find(a=>(a.username===ident||a.email===ident)&&a.password===pw&&a.status!=="Désactivé");
+ if(ident&&pw&&acc){
+   state.accountId=acc.id;state.role=acc.role||role;state.screen=roles[state.role]?.dash?"dashboard":"planning";render();return;
+ }
+ if(ident==="demo"&&pw==="1234"){state.accountId=null;state.role=role;state.screen=roles[state.role].dash?"dashboard":"planning";render();return}
+ toast("Identifiant ou mot de passe incorrect");
+}
 function navItems(){
 let base=[["planning","Planning"],["proposals","Propositions"],["pointage","Pointage"],["sites","Sites"],["clients","Clients"]];
 if(roles[state.role].dash) base.unshift(["dashboard","Accueil"]);
-if(state.role==="direction"){base.push(["agents","Agents"],["sous","Sous-traitants"],["accounts","Comptes"],["docs","Documents"],["incidents","Incidents"])}
-else if(state.role==="cadre"){base.push(["agents","Agents"],["sous","Sous-traitants"],["docs","Documents"],["incidents","Incidents"])}
-else if(state.role==="sous"){base.push(["agents","Mes agents"],["docs","Documents"])}
-else base.push(["main","Main courante"],["incidents","Incidents"]);
+if(state.role==="direction"){base.push(["agents","Agents"],["sous","Sous-traitants"],["accounts","Comptes"],["docs","Documents"],["incidents","Incidents"],["profile","Mon compte"])}
+else if(state.role==="cadre"){base.push(["agents","Agents"],["sous","Sous-traitants"],["docs","Documents"],["incidents","Incidents"],["profile","Mon compte"])}
+else if(state.role==="sous"){base.push(["agents","Mes agents"],["docs","Documents"],["profile","Mon compte"])}
+else base.push(["main","Main courante"],["incidents","Incidents"],["profile","Mon compte"]);
 return base;
 }
 function render(){
@@ -254,13 +341,62 @@ root.innerHTML=`<div class="app">
 
 function modalHTML(){
  if(!state.modal)return "";
- if(state.modal==="siteplanning"){
+ if(state.modal==="account"){
+ const a=accounts.find(x=>Number(x.id)===Number(state.accountId))||{};
+ const agent=agentsData.find(x=>Number(x.id)===Number(state.agentAccountId||a.agentId));
+ const isAgent=!!agent;
+ const nameDefault=a.name|| (agent?agent.first+" "+agent.last:"");
+ const roleDefault=a.role||(isAgent?"salarie":"cadre");
+ return `<div class="modal" onclick="if(event.target===this)closeModal()"><div class="modalbox"><div class="itemtop"><div class="title">${state.accountId?"Modifier le compte":"Créer un compte"}${isAgent?" — Agent SECURIAN":""}</div><button class="outline" onclick="closeModal()">✕</button></div><div class="formgrid">
+ <label class="small">Nom / titulaire *</label><input id="accName" class="field" value="${esc(nameDefault)}" placeholder="Nom et prénom">
+ <label class="small">Rôle *</label><select id="accRole" class="field" ${isAgent?"disabled":""}><option value="direction" ${roleDefault==="direction"?"selected":""}>Direction</option><option value="cadre" ${roleDefault==="cadre"?"selected":""}>Cadre / Responsable</option><option value="salarie" ${roleDefault==="salarie"?"selected":""}>Agent SECURIAN</option><option value="sous" ${roleDefault==="sous"?"selected":""}>Responsable sous-traitant</option><option value="agentext" ${roleDefault==="agentext"?"selected":""}>Agent sous-traitant</option></select>
+ <label class="small">E-mail *</label><input id="accEmail" class="field" type="email" value="${esc(a.email||agent?.email||"")}" placeholder="email@exemple.fr">
+ <label class="small">Téléphone</label><input id="accPhone" class="field" type="tel" value="${esc(a.phone||agent?.phone||"")}" placeholder="06...">
+ <label class="small">Identifiant *</label><input id="accUsername" class="field" value="${esc(a.username||"")}" autocomplete="username">
+ <label class="small">Mot de passe *</label><input id="accPassword" class="field" type="password" value="${esc(a.password||"")}" autocomplete="new-password">
+ <input id="accAgentId" type="hidden" value="${agent?.id||a.agentId||""}">
+ </div><div class="small" style="margin-top:10px">Le compte est stocké localement dans cette version prototype. Pour une mise en production, les mots de passe devront être gérés côté serveur et chiffrés/haschés.</div><button class="primary" style="width:100%;margin-top:12px" onclick="saveAccount()">💾 ENREGISTRER LE COMPTE</button></div></div>`;
+}
+if(state.modal==="myaccount"){
+ const a=accounts.find(x=>Number(x.id)===Number(state.accountId));
+ if(!a)return `<div class="modal" onclick="if(event.target===this)closeModal()"><div class="modalbox"><div class="title">Compte de démonstration</div><div class="small" style="margin-top:8px">Le compte démo n'est pas enregistré dans la gestion des comptes.</div><button class="primary" style="width:100%;margin-top:12px" onclick="closeModal()">FERMER</button></div></div>`;
+ return `<div class="modal" onclick="if(event.target===this)closeModal()"><div class="modalbox"><div class="itemtop"><div class="title">⚙️ Gestion du compte</div><button class="outline" onclick="closeModal()">✕</button></div><div class="formgrid"><label class="small">E-mail *</label><input id="myEmail" class="field" type="email" value="${esc(a.email||"")}"><label class="small">Téléphone</label><input id="myPhone" class="field" type="tel" value="${esc(a.phone||"")}"><label class="small">Nouveau mot de passe</label><input id="myPassword" class="field" type="password" placeholder="Laisser vide pour conserver"></div><button class="primary" style="width:100%;margin-top:12px" onclick="saveMyAccount()">💾 ENREGISTRER</button></div></div>`;
+}
+
+if(state.modal==="siteplanning"){
   const site=sitesData.find(s=>s.id===state.siteId);
-  return `<div class="modal" onclick="if(event.target===this)closeModal()"><div class="modalbox"><div class="itemtop"><div class="title">📅 Planning — ${esc(site?site.name:"")}</div><button class="outline" onclick="closeModal()">✕</button></div><div class="small">Client : ${esc((clientsData.find(c=>c.id===Number(site?.clientId))||{}).name||"")}</div><div class="formgrid"><label class="small">Date</label><input id="sitePlanDate" class="field" type="date"><label class="small">Début</label><input id="sitePlanStart" class="field" type="time" value="18:00"><label class="small">Fin</label><input id="sitePlanEnd" class="field" type="time" value="06:00"><label class="small">Agent</label><select id="sitePlanAgent" class="field"><option value="">À pourvoir</option>${agentsData.map(a=>`<option value="${a.id}">${esc(a.first)} ${esc(a.last)}</option>`).join("")}</select></div><button class="primary" style="width:100%;margin-top:12px" onclick="createSiteShift()">➕ AJOUTER LA VACATION</button>${sitePlanning(state.siteId)}</div></div>`;
+  return `<div class="modal" onclick="if(event.target===this)closeModal()"><div class="modalbox"><div class="itemtop"><div class="title">📅 Planning — ${esc(site?site.name:"")}</div><button class="outline" onclick="closeModal()">✕</button></div><div class="small">Client : ${esc((clientsData.find(c=>c.id===Number(site?.clientId))||{}).name||"")}</div><div class="formgrid"><label class="small">Date</label><input id="sitePlanDate" class="field" type="date"><label class="small">Début</label><input id="sitePlanStart" class="field" type="time" value="18:00"><label class="small">Fin</label><input id="sitePlanEnd" class="field" type="time" value="06:00"><label class="small">Agent SECURIAN</label><select id="sitePlanAgent" class="field"><option value="">Aucun / à pourvoir</option>${agentsData.map(a=>`<option value="${a.id}">${esc(a.first)} ${esc(a.last)}</option>`).join("")}</select><label class="small">Sous-traitant</label><select id="sitePlanSubcontractor" class="field" onchange="syncSiteSubAgentUI()"><option value="">Aucun</option>${subcontractorsData.map(s=>`<option value="${s.id}">${esc(s.name)}</option>`).join("")}</select><label class="small">Agent du sous-traitant</label><select id="sitePlanSubAgent" class="field"><option value="">À pourvoir / rechercher</option></select></div><button class="primary" style="width:100%;margin-top:12px" onclick="createSiteShift()">➕ AJOUTER LA VACATION</button>${sitePlanning(state.siteId)}</div></div>`;
  }
 
  if(state.modal==="shift"){
-  return `<div class="modal" onclick="if(event.target===this)closeModal()"><div class="modalbox"><div class="itemtop"><div class="title">Créer une vacation</div><button class="outline" onclick="closeModal()">✕</button></div><div class="formgrid"><label class="small">Date</label><input id="shiftDate" class="field" type="date"><label class="small">Début</label><input id="shiftStart" class="field" type="time" value="18:00"><label class="small">Fin</label><input id="shiftEnd" class="field" type="time" value="06:00"><select id="shiftSite" class="field"><option value="">Choisir un site *</option>${sitesData.map(s=>`<option value="${s.id}">${esc(s.name)} — ${esc(s.city)}</option>`).join("")}</select><select id="shiftAgent" class="field"><option value="">À pourvoir / rechercher</option>${agentsData.map(a=>`<option value="${a.id}">${esc(a.first)} ${esc(a.last)}</option>`).join("")}</select></div><div class="small" style="margin-top:10px">Les variables seront calculées automatiquement : nuit 21h–06h, dimanche, férié, habillage et panier ≥ 6 h.</div><button class="primary" style="width:100%;margin-top:12px" onclick="createShift()">CRÉER LA VACATION</button></div></div>`;
+  return `<div class="modal" onclick="if(event.target===this)closeModal()"><div class="modalbox"><div class="itemtop"><div class="title">Créer une vacation</div><button class="outline" onclick="closeModal()">✕</button></div>
+  <div class="formgrid">
+  <label class="small">Mode</label><select id="shiftMode" class="field" onchange="document.getElementById('multiShiftDates').style.display=this.value==='multi'?'block':'none'"><option value="single">Une seule date</option><option value="multi">Plusieurs jours</option></select>
+  <label class="small">Date</label><input id="shiftDate" class="field" type="date">
+  <div id="multiShiftDates" style="display:none;grid-column:1/-1">
+    <div class="small" style="margin:8px 0 5px">Période</div>
+    <input id="shiftEndDate" class="field" type="date" style="width:100%;margin-bottom:8px">
+    <div class="small" style="margin-bottom:5px">Jours à répéter</div>
+    <div style="display:flex;flex-wrap:wrap;gap:6px">
+      <label class="chip"><input type="checkbox" name="shiftDays" value="1" checked> Lun</label>
+      <label class="chip"><input type="checkbox" name="shiftDays" value="2" checked> Mar</label>
+      <label class="chip"><input type="checkbox" name="shiftDays" value="3" checked> Mer</label>
+      <label class="chip"><input type="checkbox" name="shiftDays" value="4" checked> Jeu</label>
+      <label class="chip"><input type="checkbox" name="shiftDays" value="5" checked> Ven</label>
+      <label class="chip"><input type="checkbox" name="shiftDays" value="6"> Sam</label>
+      <label class="chip"><input type="checkbox" name="shiftDays" value="0"> Dim</label>
+    </div>
+  </div>
+  <label class="small">Début</label><input id="shiftStart" class="field" type="time" value="18:00">
+  <label class="small">Fin</label><input id="shiftEnd" class="field" type="time" value="06:00">
+  <label class="small">Site *</label><select id="shiftSite" class="field"><option value="">Choisir un site *</option>${sitesData.map(s=>`<option value="${s.id}">${esc(s.name)} — ${esc(s.city)}</option>`).join("")}</select>
+  <label class="small">Agent SECURIAN</label><select id="shiftAgent" class="field"><option value="">Aucun / à pourvoir</option>${agentsData.map(a=>`<option value="${a.id}">${esc(a.first)} ${esc(a.last)}</option>`).join("")}</select>
+  <label class="small">Sous-traitant</label><select id="shiftSubcontractor" class="field" onchange="syncShiftAgentOptions();syncShiftSubAgentUI()"><option value="">Aucun</option>${subcontractorsData.map(s=>`<option value="${s.id}">${esc(s.name)}</option>`).join("")}</select>
+  <label class="small">Agent du sous-traitant</label><select id="shiftSubAgent" class="field"><option value="">À pourvoir / rechercher</option></select>
+  </div>
+  <div class="small" style="margin-top:10px">En mode <b>Plusieurs jours</b>, choisis une période et les jours concernés. Exemple : du 01/09 au 30/09, tous les lundis, mercredis et vendredis.</div>
+  <button class="primary" style="width:100%;margin-top:12px" onclick="document.getElementById('shiftMode').value==='multi'?createMultiShifts():createShift()">CRÉER LA VACATION</button>
+  </div></div>`;
  }
 
  if(state.modal==="subdetail")return subDetailHTML();
@@ -285,7 +421,7 @@ function modalHTML(){
  }
  if(t==="agent"){
   const x=editing?agentsData[state.editIndex]:{first:"",last:"",phone:"",email:"",card:"Valide",cardNumber:"",site:""};
-  return `<div class="modal" onclick="if(event.target===this)closeModal()"><div class="modalbox"><div class="itemtop"><div class="title">${editing?"Modifier l'agent":"Créer un agent"}</div><button class="outline" onclick="closeModal()">✕</button></div><div class="formgrid"><input id="agentFirst" class="field" placeholder="Prénom *" value="${esc(x.first)}"><input id="agentLast" class="field" placeholder="Nom *" value="${esc(x.last)}"><input id="agentCardNumber" class="field" placeholder="N° de carte professionnelle *" value="${esc(x.cardNumber||"")}" autocomplete="off"><label class="small">Date de fin de validité de la carte professionnelle *</label><input id="agentCardExpiry" class="field" type="date" value="${esc(x.cardExpiry||"")}"><input id="agentPhone" class="field" placeholder="Téléphone" value="${esc(x.phone)}" type="tel"><input id="agentEmail" class="field" placeholder="E-mail" value="${esc(x.email)}" type="email"><select id="agentCard" class="field"><option ${x.card==="Valide"?"selected":""}>Valide</option><option ${x.card==="28 jours"?"selected":""}>28 jours</option><option>60 jours</option><option>Expirée</option></select><select id="agentSite" class="field"><option value="">Aucun site affecté</option>${sitesData.map(s=>`<option ${x.site===s.name+" — "+s.city?"selected":""}>${esc(s.name)} — ${esc(s.city)}</option>`).join("")}</select></div><button class="primary" style="width:100%;margin-top:12px" onclick="submitEntity('agent')">${editing?"ENREGISTRER":"CRÉER L'AGENT"}</button></div></div>`;
+  return `<div class="modal" onclick="if(event.target===this)closeModal()"><div class="modalbox"><div class="itemtop"><div class="title">${editing?"Modifier l'agent":"Créer un agent"}</div><button class="outline" onclick="closeModal()">✕</button></div><div class="formgrid"><input id="agentFirst" class="field" placeholder="Prénom *" value="${esc(x.first)}"><input id="agentLast" class="field" placeholder="Nom *" value="${esc(x.last)}"><input id="agentCardNumber" class="field" placeholder="N° de carte professionnelle *" value="${esc(x.cardNumber||"")}" autocomplete="off"><label class="small">Date de fin de validité de la carte professionnelle *</label><input id="agentCardExpiry" class="field" type="date" value="${esc(x.cardExpiry||"")}"><input id="agentPhone" class="field" placeholder="Téléphone" value="${esc(x.phone)}" type="tel"><input id="agentEmail" class="field" placeholder="E-mail" value="${esc(x.email)}" type="email"><div style="grid-column:1/-1;margin-top:4px;padding:10px;border:1px solid var(--line);border-radius:12px"><label><input id="agentCreateAccount" type="checkbox" ${accountForAgent(x.id)?.id||!editing?"checked":""} onchange="document.getElementById('agentAccessFields').style.display=this.checked?'grid':'none'"> <b>Créer un compte d’accès pour cet agent</b></label><div id="agentAccessFields" class="formgrid" style="margin-top:9px"><input id="agentUsername" class="field" placeholder="Identifiant *" value="${esc(accountForAgent(x.id)?.username||"")}"><input id="agentPassword" class="field" placeholder="Mot de passe *" type="password" value="${esc(accountForAgent(x.id)?.password||"")}"></div></div><select id="agentCard" class="field"><option ${x.card==="Valide"?"selected":""}>Valide</option><option ${x.card==="28 jours"?"selected":""}>28 jours</option><option>60 jours</option><option>Expirée</option></select><select id="agentSite" class="field"><option value="">Aucun site affecté</option>${sitesData.map(s=>`<option ${x.site===s.name+" — "+s.city?"selected":""}>${esc(s.name)} — ${esc(s.city)}</option>`).join("")}</select></div><button class="primary" style="width:100%;margin-top:12px" onclick="submitEntity('agent')">${editing?"ENREGISTRER":"CRÉER L'AGENT"}</button></div></div>`;
  }
  if(t==="sub"){
   const x=editing?subcontractorsData[state.editIndex]:{name:"",contact:"",phone:"",email:""};
@@ -295,6 +431,11 @@ function modalHTML(){
 }
 
 function go(s){state.screen=s;render()}
+
+function profileScreen(){
+ const acc=accounts.find(a=>Number(a.id)===Number(state.accountId));
+ return `<div class="eyebrow">COMPTE</div><div class="h1">Mon compte</div><div class="muted">Coordonnées et sécurité de votre accès SECURIAN.</div><div class="card" style="margin-top:14px"><div class="title">${esc(acc?.name||roles[state.role].name)}</div><div class="small" style="margin-top:7px">Profil : ${esc(acc?.roleLabel||roles[state.role].label)}</div><div class="small">Identifiant : ${esc(acc?.username||"Compte démo")}</div><div class="small">E-mail : ${esc(acc?.email||"Non renseigné")}</div><div class="small">Téléphone : ${esc(acc?.phone||"Non renseigné")}</div><button class="primary" style="margin-top:12px" onclick="openMyAccount()">⚙️ MODIFIER MON COMPTE</button></div>`;
+}
 function screen(){
 switch(state.screen){
 case"dashboard":return dashboard();
@@ -302,7 +443,7 @@ case"planning":return planning();
 case"pointage":return pointage();
 case"sites":return sites();
 case"agents":return agents();
-case"accounts":return accountsScreen();
+case"accounts":return accountsScreen(); case"profile":return profileScreen();
 case"sous":return sous();
 case"docs":return docs();
 case"main":return maincourante();
@@ -345,20 +486,156 @@ function planningRows(){
   return s.date.startsWith(month)&&(!selectedSite||String(s.siteId)===selectedSite)&&(!selectedAgent||String(s.agentId)===selectedAgent)&&(!selectedClient||String(site?.clientId)===selectedClient);
  }).sort((a,b)=>(a.date+a.start).localeCompare(b.date+b.start));
 }
+
+function csvEscape(v){return `"${String(v??"").replaceAll('"','""')}"`}
+
 function exportPlanningCSV(){
- const rows=planningRows(), header=["Date","Début","Fin","Client","Site","Agent","Statut","Heures","Heures nuit","Dimanche","Férié","Panier","Habillage (h)"];
- const csv=[header,...rows.map(s=>{const site=sitesData.find(x=>x.id===s.siteId),client=clientsData.find(c=>c.id===Number(site?.clientId)),agent=agentsData.find(a=>a.id===s.agentId),v=variableCalc(s);return [s.date,s.start,s.end,client?.name||"",site?.name||"",agent?agent.first+" "+agent.last:"À pourvoir",s.status,v.hours,v.night,v.sunday?"Oui":"Non",v.holiday?"Oui":"Non",v.panier,v.habillageHours.toFixed(2)]})]
- .map(r=>r.map(v=>`"${String(v).replaceAll('"','""')}"`).join(";")).join("\n");
+ const rows=planningRows();
+ const header=["Date","Début","Fin","Client","Site","Agent","Statut","Heures","Heures nuit","Dimanche","Férié","Panier","Habillage (h)"];
+ const csv=[header,...rows.map(s=>{
+  const site=sitesData.find(x=>x.id===s.siteId),client=clientsData.find(c=>c.id===Number(site?.clientId));
+  const agent=agentsData.find(a=>a.id===s.agentId),v=variableCalc(s);
+  return [s.date,s.start,s.end,client?.name||"",site?.name||"",agent?agent.first+" "+agent.last:"À pourvoir",s.status,v.hours,v.night,sundayLabel(v),holidayLabel(v),v.panier,v.habillageHours.toFixed(2)];
+ })].map(r=>r.map(csvEscape).join(";")).join("\n");
  const blob=new Blob(["\ufeff"+csv],{type:"text/csv;charset=utf-8"}),url=URL.createObjectURL(blob),a=document.createElement("a");
  a.href=url;a.download="SECURIAN-planning-"+(state.planMonth||"mois")+".csv";a.click();URL.revokeObjectURL(url);
 }
+
+function sundayLabel(v){return v.sunday?"Oui":""}
+function holidayLabel(v){return v.holiday?"Oui":""}
+
 function printPlanning(){
  const rows=planningRows(), month=state.planMonth||new Date().toISOString().slice(0,7);
- const w=window.open("","_blank"); if(!w){toast("Autorisez les fenêtres popup pour imprimer");return}
- const body=rows.map(s=>{const site=sitesData.find(x=>x.id===s.siteId),client=clientsData.find(c=>c.id===Number(site?.clientId)),agent=agentsData.find(a=>a.id===s.agentId),v=variableCalc(s);return `<tr><td>${s.date}</td><td>${s.start}</td><td>${s.end}</td><td>${client?.name||""}</td><td>${site?.name||""}</td><td>${agent?agent.first+" "+agent.last:"À pourvoir"}</td><td>${s.status}</td><td>${v.hours} h</td><td>${v.night} h</td></tr>`}).join("");
- w.document.write(`<html><head><title>SECURIAN - Planning ${month}</title><style>body{font-family:Arial,sans-serif;padding:25px}h1{font-size:22px}table{width:100%;border-collapse:collapse;font-size:11px}th,td{border:1px solid #bbb;padding:6px;text-align:left}th{background:#eee}@media print{button{display:none}}</style></head><body><h1>SECURIAN — Planning ${month}</h1><table><thead><tr><th>Date</th><th>Début</th><th>Fin</th><th>Client</th><th>Site</th><th>Agent</th><th>Statut</th><th>Heures</th><th>Nuit</th></tr></thead><tbody>${body}</tbody></table><script>window.print();<\/script></body></html>`);
+ openPlanningPrint("general",rows,month);
+}
+
+function printAgentPlanning(){
+ const month=state.planMonth||new Date().toISOString().slice(0,7);
+ const selectedAgent=state.planAgent||"";
+ if(!selectedAgent){toast("Sélectionnez un agent avant l'export agent");return}
+ const agentId=Number(selectedAgent);
+ const rows=shiftsData.filter(s=>s.date.startsWith(month)&&Number(s.agentId)===agentId).sort((a,b)=>(a.date+a.start).localeCompare(b.date+b.start));
+ openPlanningPrint("agent",rows,month,agentId);
+}
+
+function printSitePlanning(){
+ const month=state.planMonth||new Date().toISOString().slice(0,7);
+ const selectedSite=state.planSite||"";
+ if(!selectedSite){toast("Sélectionnez un site avant l'export site");return}
+ const siteId=Number(selectedSite);
+ const rows=shiftsData.filter(s=>s.date.startsWith(month)&&Number(s.siteId)===siteId).sort((a,b)=>(a.date+a.start).localeCompare(b.date+b.start));
+ openPlanningPrint("site",rows,month,siteId);
+}
+
+function monthDays(month){
+ const [y,m]=month.split("-").map(Number),count=new Date(y,m,0).getDate(),out=[];
+ for(let d=1;d<=count;d++){
+  const date=`${y}-${String(m).padStart(2,"0")}-${String(d).padStart(2,"0")}`;
+  out.push(date);
+ }
+ return out;
+}
+
+function frDay(date){
+ const d=new Date(date+"T12:00:00");
+ return ["dimanche","lundi","mardi","mercredi","jeudi","vendredi","samedi"][d.getDay()];
+}
+function frDate(date){
+ const [y,m,d]=date.split("-");
+ return `${d}/${m}/${y}`;
+}
+
+function daysInMonth(month){
+ const [y,m]=month.split("-").map(Number);
+ return new Date(y,m,0).getDate();
+}
+function monthDates(month){
+ const [y,m]=month.split("-").map(Number),n=daysInMonth(month),out=[];
+ for(let d=1;d<=n;d++) out.push(`${y}-${String(m).padStart(2,"0")}-${String(d).padStart(2,"0")}`);
+ return out;
+}
+function frDay(date){
+ const d=new Date(date+"T12:00:00");
+ return ["dimanche","lundi","mardi","mercredi","jeudi","vendredi","samedi"][d.getDay()];
+}
+function frDate(date){
+ const [y,m,d]=date.split("-");
+ return `${d}/${m}/${y}`;
+}
+function fmt(n){return Number(n||0).toFixed(Number(n||0)%1?1:0)}
+
+function openPlanningPrint(kind,rows,month,entityId){
+ const first=new Date(month+"-01T12:00:00");
+ const lastDay=daysInMonth(month);
+ const last=new Date(first); last.setDate(lastDay);
+ const range=`DU ${first.toLocaleDateString("fr-FR",{day:"2-digit",month:"2-digit",year:"numeric"})} AU ${last.toLocaleDateString("fr-FR",{day:"2-digit",month:"2-digit",year:"numeric"})}`;
+
+ let entityTitle="";
+ if(kind==="agent"){
+  const ag=agentsData.find(x=>x.id===entityId);
+  entityTitle=ag?`${esc(ag.first)} ${esc(ag.last)}`:"Agent";
+ }else if(kind==="site"){
+  const s=sitesData.find(x=>x.id===entityId),c=clientsData.find(x=>x.id===Number(s?.clientId));
+  entityTitle=s?`${esc(s.name)} — CLIENT : ${esc(c?.name||"")}`:"Site";
+ }else entityTitle="Planning général";
+
+ const byDate={};
+ rows.forEach(s=>(byDate[s.date]??=[]).push(s));
+
+ let total=0,totalNight=0,totalSun=0,totalHoliday=0;
+ const body=monthDates(month).map(date=>{
+  const list=byDate[date]||[];
+  const monday=frDay(date)==="lundi";
+  if(!list.length){
+   return `<tr class="${monday?"rest":""}"><td>${frDay(date)}</td><td>${frDate(date)}</td><td></td><td></td>${kind==="site"?`<td></td>`:""}<td></td><td></td><td></td><td></td><td></td><td></td><td></td><td></td></tr>`;
+  }
+  return list.map(s=>{
+   const site=sitesData.find(x=>x.id===s.siteId),client=clientsData.find(c=>c.id===Number(site?.clientId)),agent=agentsData.find(a=>a.id===s.agentId),subAgent=subAgentsData.find(a=>a.id===s.subAgentId),subcontractor=subcontractorsData.find(x=>x.id===s.subcontractorId);
+   const v=variableCalc(s);
+   total+=v.hours; totalNight+=v.night; totalSun+=v.sunday?v.hours:0; totalHoliday+=v.holiday?v.hours:0;
+   const common=`<td>${frDay(date)}</td><td>${frDate(date)}</td><td>${esc(s.start)}-${esc(s.end)}</td><td>${fmt(v.hours)}</td>`;
+   const variables=`<td>${v.hours?fmt(v.hours):""}</td><td>${v.night?fmt(v.night):""}</td><td>${v.sunday?fmt(v.hours):""}</td><td>${v.sunday&&v.night?fmt(Math.min(v.night,v.hours)):""}</td><td>${v.holiday?fmt(v.hours):""}</td><td>${v.holiday&&v.night?fmt(Math.min(v.night,v.hours)):""}</td>`;
+   if(kind==="site"){
+    return `<tr>${common}<td>${esc(client?.name||"")}</td><td>${esc(site?.name||"")}</td><td>${subAgent?esc(subcontractor?.name||"Sous-traitant")+" — "+esc(subAgent.first+" "+subAgent.last):esc(agent?agent.first+" "+agent.last:"À pourvoir")}</td>${variables}</tr>`;
+   }
+   return `<tr>${common}<td>${esc(site?.name||"")}</td><td>${subAgent?esc(subcontractor?.name||"Sous-traitant")+" — "+esc(subAgent.first+" "+subAgent.last):esc(agent?agent.first+" "+agent.last:"À pourvoir")}</td>${variables}</tr>`;
+  }).join("");
+ }).join("");
+
+ const header=kind==="site"
+  ? `<th>JOUR</th><th>DATE</th><th>HORAIRES</th><th>HEURES</th><th>CLIENT</th><th>SITES</th><th>INTERVENANT</th><th>J</th><th>N</th><th>D</th><th>DN</th><th>F</th><th>FN</th>`
+  : `<th>JOUR</th><th>DATE</th><th>HORAIRES</th><th>HEURES</th><th>SITES</th><th>INTERVENANT</th><th>J</th><th>N</th><th>D</th><th>DN</th><th>F</th><th>FN</th>`;
+
+ const totals=kind==="site"
+  ? `<tr class="total"><td>TOTAL</td><td></td><td></td><td>${fmt(total)}</td><td></td><td></td><td></td><td>${fmt(total)}</td><td>${fmt(totalNight)}</td><td>${fmt(totalSun)}</td><td></td><td>${fmt(totalHoliday)}</td><td></td></tr>`
+  : `<tr class="total"><td>TOTAL</td><td></td><td></td><td>${fmt(total)}</td><td></td><td></td><td>${fmt(total)}</td><td>${fmt(totalNight)}</td><td>${fmt(totalSun)}</td><td></td><td>${fmt(totalHoliday)}</td><td></td></tr>`;
+
+ const w=window.open("","_blank");
+ if(!w){toast("Autorisez les fenêtres popup pour exporter en PDF");return}
+ w.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>SECURIAN - ${entityTitle}</title><style>
+ @page{size:A4 landscape;margin:7mm}
+ *{box-sizing:border-box}body{font-family:Arial,Helvetica,sans-serif;color:#111;margin:0;padding:5px}
+ .head{display:grid;grid-template-columns:100px 1fr 100px;align-items:center;text-align:center;margin-bottom:6px}
+ .head img{width:78px;height:58px;object-fit:contain;justify-self:start}
+ h1{font-size:27px;margin:0;font-weight:800;letter-spacing:.5px}
+ .range{font-size:10px;font-weight:700;margin-top:3px}.tel{font-size:9px;margin-top:2px}
+ .entity{font-size:16px;font-weight:800;margin-top:7px}
+ table{width:100%;border-collapse:collapse;table-layout:fixed;font-size:9px}
+ th,td{border:1px solid #aaa;padding:3px 4px;text-align:center;height:18px;overflow:hidden;white-space:nowrap}
+ th{background:#c5c5c5;font-weight:800}
+ td:first-child{text-align:left;font-weight:700}
+ .rest td{background:#d2d2d2}
+ .total td{font-weight:800;background:#eee;height:21px}
+ .foot{margin-top:6px;font-size:8px;text-align:right;color:#555}
+ @media print{body{padding:0}}
+ </style></head><body>
+ <div class="head"><img src="${logo}" alt="SECURIAN"><div><h1>SECURIAN</h1><div class="range">${range}</div><div class="tel">TEL : 06.10.68.63.47</div><div class="entity">${entityTitle}</div></div><div></div></div>
+ <table><thead><tr>${header}</tr></thead><tbody>${body}${totals}</tbody></table>
+ <div class="foot">J = heures planifiées • N = nuit 21h00–06h00 • D = dimanche • F = férié • DN/FN = nuit sur dimanche/férié • 🤝 = sous-traitant.</div>
+ <script>window.addEventListener('load',()=>setTimeout(()=>window.print(),250));<\/script></body></html>`);
  w.document.close();
 }
+
 function planning(){
  const siteName=id=>{const s=sitesData.find(x=>x.id===id);return s?s.name+" — "+s.city:"Site inconnu"};
  const agentName=id=>{const a=agentsData.find(x=>x.id===id);return a?a.first+" "+a.last:"À pourvoir"};
@@ -375,8 +652,8 @@ function planning(){
  return `<div class="eyebrow">ORGANISATION</div><div class="h1">Planning</div><div class="muted">Visualisez le mois par client, site et agent.</div>
  ${canManage()?`<button class="primary" style="width:100%;margin-top:14px" onclick="state.modal='shift';render()">➕ CRÉER UNE VACATION</button>`:""}
  <div class="formgrid" style="margin-top:14px"><label class="small">Mois</label><input id="planMonth" class="field" type="month" value="${month}" onchange="state.planMonth=this.value;render()"><label class="small">Client</label><select class="field" onchange="state.planClient=this.value;render()"><option value="">Tous les clients</option>${clientsData.map(c=>`<option value="${c.id}" ${selectedClient==String(c.id)?"selected":""}>${esc(c.name)}</option>`).join("")}</select><label class="small">Site</label><select class="field" onchange="state.planSite=this.value;render()"><option value="">Tous les sites</option>${sitesData.map(s=>`<option value="${s.id}" ${selectedSite==String(s.id)?"selected":""}>${esc(s.name)} — ${esc(s.city)}</option>`).join("")}</select><label class="small">Agent</label><select class="field" onchange="state.planAgent=this.value;render()"><option value="">Tous les agents</option>${agentsData.map(a=>`<option value="${a.id}" ${selectedAgent==String(a.id)?"selected":""}>${esc(a.first)} ${esc(a.last)}</option>`).join("")}</select></div>
- <div class="row"><button class="${view==="month"?"primary":"outline"}" onclick="planningView('month')">📅 Mois</button><button class="${view==="list"?"primary":"outline"}" onclick="planningView('list')">☷ Liste</button></div><div class="row"><button class="outline" onclick="exportPlanningCSV()">⬇️ EXPORTER CSV</button><button class="outline" onclick="printPlanning()">🖨️ IMPRIMER / PDF</button></div>
- ${view==="month"?monthGrid():`<div class="section">${filtered.length} vacation(s)</div><div class="list">${filtered.map(sh=>{const v=variableCalc(sh);return `<div class="item"><div class="itemtop"><strong>📅 ${esc(sh.date)} • ${esc(sh.start)} → ${esc(sh.end)}</strong><span class="badge ${sh.status==="Affecté"?"ok":"warn"}">${esc(sh.status)}</span></div><div class="small">👤 Client : ${esc((clientsData.find(c=>c.id===Number((sitesData.find(s=>s.id===sh.siteId)||{}).clientId))||{}).name||"")}</div><div class="small">🏢 ${esc(siteName(sh.siteId))} • 👮 ${esc(agentName(sh.agentId))}</div><div class="small">⏱️ ${v.hours} h • 🌙 ${v.night} h nuit • 🍽️ ${v.panier} panier • 👕 ${v.habillageHours.toFixed(2)} h habillage</div><div class="row">${sh.status==="À pourvoir"&&canManage()?`<button class="primary" onclick="proposeShift(${sh.id})">🔎 RECHERCHER DES AGENTS</button>`:""}${sh.status==="En attente de validation"&&canManage()?`<button class="primary" onclick="validateShift(${sh.id})">✅ VALIDER</button>`:""}</div></div>`}).join("")}</div>`}
+ <div class="row"><button class="${view==="month"?"primary":"outline"}" onclick="planningView('month')">📅 Mois</button><button class="${view==="list"?"primary":"outline"}" onclick="planningView('list')">☷ Liste</button></div><div class="row"><button class="outline" onclick="exportPlanningCSV()">⬇️ CSV</button><button class="outline" onclick="printPlanning()">🖨️ PDF GÉNÉRAL</button><button class="outline" onclick="printAgentPlanning()">👮 PDF AGENT</button><button class="outline" onclick="printSitePlanning()">🏢 PDF SITE + CLIENT</button></div>
+ ${view==="month"?monthGrid():`<div class="section">${filtered.length} vacation(s)</div><div class="list">${filtered.map(sh=>{const v=variableCalc(sh);return `<div class="item"><div class="itemtop"><strong>📅 ${esc(sh.date)} • ${esc(sh.start)} → ${esc(sh.end)}</strong><span class="badge ${sh.status==="Affecté"?"ok":"warn"}">${esc(sh.status)}</span></div><div class="small">👤 Client : ${esc((clientsData.find(c=>c.id===Number((sitesData.find(s=>s.id===sh.siteId)||{}).clientId))||{}).name||"")}</div><div class="small">🏢 ${esc(siteName(sh.siteId))} • ${sh.subAgentId?`🤝 ${esc(getSubName(sh.subcontractorId))} • 👮 ${esc(getSubAgentName(sh.subAgentId))}`:`👮 ${esc(agentName(sh.agentId))}`}</div><div class="small">⏱️ ${v.hours} h • 🌙 ${v.night} h nuit • 🍽️ ${v.panier} panier • 👕 ${v.habillageHours.toFixed(2)} h habillage</div><div class="row">${sh.status==="À pourvoir"&&canManage()?`<button class="primary" onclick="proposeShift(${sh.id})">🔎 RECHERCHER DES AGENTS</button>`:""}${sh.status==="En attente de validation"&&canManage()?`<button class="primary" onclick="validateShift(${sh.id})">✅ VALIDER</button>`:""}</div></div>`}).join("")}</div>`}
  <div class="section">Synthèse du mois</div><div class="grid"><div class="stat">📅<b>${filtered.length}</b><span>vacations</span></div><div class="stat">⏱️<b>${filtered.reduce((n,s)=>n+variableCalc(s).hours,0).toFixed(1)}</b><span>heures</span></div><div class="stat">🌙<b>${filtered.reduce((n,s)=>n+variableCalc(s).night,0).toFixed(1)}</b><span>heures nuit</span></div><div class="stat">🍽️<b>${filtered.reduce((n,s)=>n+variableCalc(s).panier,0)}</b><span>paniers</span></div></div>`;
 }
 function pointage(){return `<div class="eyebrow">PRÉSENCE</div><div class="h1">Pointage</div><div class="card"><div style="font-size:38px">📍</div><div class="title">Centre commercial — Montpellier</div><div class="muted">La géolocalisation est utilisée uniquement pour le pointage et le service.</div><button class="primary" style="width:100%;margin-top:18px" onclick="toast('Service démarré • position enregistrée')">DÉMARRER MON SERVICE</button><button class="outline" style="width:100%;margin-top:9px" onclick="toast('Service terminé • pointage enregistré')">TERMINER MON SERVICE</button><button class="darkbtn" style="width:100%;margin-top:9px" onclick="waze('Centre commercial Montpellier')">🧭 ITINÉRAIRE WAZE</button></div>`}
@@ -404,15 +681,35 @@ function openSitePlanning(siteId){
 }
 function createSiteShift(){
  if(!requireDirection())return;
- const siteId=Number(state.siteId), date=esc(document.getElementById("sitePlanDate").value),start=esc(document.getElementById("sitePlanStart").value),end=esc(document.getElementById("sitePlanEnd").value),agentId=Number(document.getElementById("sitePlanAgent").value)||null;
+ const siteId=Number(state.siteId),date=esc(document.getElementById("sitePlanDate").value),start=esc(document.getElementById("sitePlanStart").value),end=esc(document.getElementById("sitePlanEnd").value);
+ const agentId=Number(document.getElementById("sitePlanAgent").value)||null;
+ const subcontractorId=Number(document.getElementById("sitePlanSubcontractor").value)||null;
+ const subAgentId=Number(document.getElementById("sitePlanSubAgent").value)||null;
  if(!date||!start||!end){toast("Date et horaires obligatoires");return}
- const sh={id:Date.now(),date,start,end,siteId,agentId,status:agentId?"Affecté":"À pourvoir",proposals:[]};
+ if(subAgentId&&!subcontractorId){toast("Sélectionnez le sous-traitant");return}
+ if(agentId&&subAgentId){toast("Choisissez soit SECURIAN, soit un sous-traitant");return}
+ const sh={id:Date.now(),date,start,end,siteId,agentId,subcontractorId,subAgentId,status:(agentId||subAgentId)?"Affecté":"À pourvoir",proposals:[]};
  if(agentId&&shiftsData.some(x=>x.agentId===agentId&&overlap(x,sh))){toast("Conflit horaire pour cet agent");return}
- shiftsData.push(sh);savePlanning();state.modal="siteplanning";toast("Vacation ajoutée au planning du site");render();
+ if(subAgentId&&subAgentConflict(subAgentId,sh)){toast("Conflit horaire pour l'agent sous-traitant");return}
+ shiftsData.push(sh);savePlanning();state.modal="siteplanning";toast("Vacation ajoutée avec affectation");render();
+}
+function syncSiteSubAgentUI(){
+ const subId=Number(document.getElementById("sitePlanSubcontractor")?.value)||0;
+ const sel=document.getElementById("sitePlanSubAgent"); if(!sel)return;
+ sel.innerHTML=`<option value="">À pourvoir / rechercher</option>`+
+ (subId?subAgentsFor(subId):[]).map(a=>`<option value="${a.id}">${esc(a.first)} ${esc(a.last)}</option>`).join("");
 }
 function sitePlanning(siteId){
  const siteShifts=[...shiftsData].filter(s=>s.siteId===siteId).sort((a,b)=>(a.date+a.start).localeCompare(b.date+b.start));
- return `<div class="section">📅 Planning du site</div><div class="list">${siteShifts.length?siteShifts.map(sh=>{const a=agentsData.find(x=>x.id===sh.agentId),v=variableCalc(sh);return `<div class="item"><div class="itemtop"><strong>${esc(sh.date)} • ${esc(sh.start)} → ${esc(sh.end)}</strong><span class="badge ${sh.status==="Affecté"?"ok":"warn"}">${esc(sh.status)}</span></div><div class="small">👮 ${esc(a?a.first+" "+a.last:"À pourvoir")} • ⏱️ ${v.hours} h • 🌙 ${v.night} h nuit • 🍽️ ${v.panier} panier</div></div>`}).join(""):`<div class="item"><strong>Aucune vacation programmée.</strong></div>`}</div>`;
+ return `<div class="section">📅 Planning du site</div><div class="list">${siteShifts.length?siteShifts.map(sh=>{const a=agentsData.find(x=>x.id===sh.agentId),sa=subAgentsData.find(x=>x.id===sh.subAgentId),v=variableCalc(sh);const who=sa?`🤝 ${esc(getSubName(sh.subcontractorId))} • 👮 ${esc(sa.first+" "+sa.last)}`:`👮 ${esc(a?a.first+" "+a.last:"À pourvoir")}`;return `<div class="item"><div class="itemtop"><strong>${esc(sh.date)} • ${esc(sh.start)} → ${esc(sh.end)}</strong><span class="badge ${sh.status==="Affecté"?"ok":"warn"}">${esc(sh.status)}</span></div><div class="small">${who} • ⏱️ ${v.hours} h • 🌙 ${v.night} h nuit • 🍽️ ${v.panier} panier</div></div>`}).join(""):`<div class="item"><strong>Aucune vacation programmée.</strong></div>`}</div>`;
+}
+
+function accountsScreen(){
+ const can=state.role==="direction";
+ if(!can)return `<div class="eyebrow">COMPTE</div><div class="h1">Mon compte</div><div class="muted">Gérez vos coordonnées et votre mot de passe.</div><button class="primary" style="width:100%;margin-top:14px" onclick="openMyAccount()">⚙️ GÉRER MON COMPTE</button>`;
+ return `<div class="eyebrow">ADMINISTRATION</div><div class="h1">Comptes d'accès</div><div class="muted">Créez et gérez les accès Direction, Cadres et Agents SECURIAN.</div>
+ <div class="row" style="margin-top:14px"><button class="primary" onclick="openCreateAgentAccount()">👮 CRÉER UN COMPTE AGENT</button><button class="outline" onclick="state.accountId=null;state.agentAccountId=null;state.modal='account';render()">➕ AUTRE COMPTE</button></div>
+ <div class="section">${accounts.length} compte(s)</div><div class="list">${accounts.length?accounts.map((a,i)=>{const ag=a.agentId?agentsData.find(x=>x.id===Number(a.agentId)):null;return `<div class="item"><div class="itemtop"><strong>🔐 ${esc(a.name)}</strong><span class="badge ${a.status==="Actif"?"ok":"danger"}">${esc(a.status||"Actif")}</span></div><div class="small">${esc(a.roleLabel||a.role)} ${ag?`• Agent lié : ${esc(ag.first+" "+ag.last)}`:""}</div><div class="small">👤 ${esc(a.username||"—")} • ✉️ ${esc(a.email||"—")} • 📞 ${esc(a.phone||"—")}</div><div class="small">🔑 Mot de passe : ••••••••</div><div class="row"><button class="outline" onclick="editAccount(${i})">Modifier</button><button class="outline" onclick="toggleAccountStatus(${i})">${a.status==="Actif"?"Désactiver":"Activer"}</button><button class="danger" onclick="removeAccount(${i})">Supprimer</button></div></div>`}).join(""):"<div class='item'>Aucun compte créé.</div>"}</div>`;
 }
 function sites(){
 const can=canManage();
@@ -424,18 +721,71 @@ const can=canManage();
 return `<div class="eyebrow">RESSOURCES HUMAINES</div><div class="h1">${state.role==="sous"?"Mes agents":"Agents"}</div><div class="muted">Fiches agents, carte professionnelle, coordonnées et affectations.</div>
 ${can?`<button class="primary" style="width:100%;margin-top:14px" onclick="openCreate('agent')">➕ CRÉER UN AGENT</button>`:""}
 <div class="section">${agentsData.length} agent(s)</div><div class="list">${agentsData.map((x,i)=>`<div class="item"><div class="itemtop"><strong>👮 ${esc(x.first)} ${esc(x.last)}</strong><span class="badge ${cardBadge(x.cardExpiry).cls}">${cardBadge(x.cardExpiry).label}</span></div><div class="small">${esc(x.type)} • ${esc(x.status)}</div><div class="small">🪪 N° ${esc(x.cardNumber||"Non renseigné")} • Fin de validité : ${x.cardExpiry?esc(new Date(x.cardExpiry+"T00:00:00").toLocaleDateString("fr-FR")):"Non renseignée"}</div><div class="small">${x.phone?"📞 "+esc(x.phone):"📞 Non renseigné"} • ${x.email?"✉️ "+esc(x.email):"✉️ Non renseigné"}</div><div class="small">🏢 ${esc(x.site||"Aucun site affecté")}</div>${can?`<div class="row"><button class="outline" onclick="editAgent(${i})">Modifier</button><button class="danger" onclick="removeAgent(${i})">Supprimer</button></div>`:""}</div>`).join("")}</div>`}
-function createAccount(){
-const name=document.getElementById("accName").value.trim();
-const email=document.getElementById("accEmail").value.trim();
-const role=document.getElementById("accRole").value;
-const password=document.getElementById("accPassword").value.trim();
-if(!name||!email||!password){toast("Veuillez remplir tous les champs");return}
-const labels={cadre:"CADRE",salarie:"AGENT SECURIAN",sous:"SOUS-TRAITANT",agentext:"AGENT SOUS-TRAITANT"};
-accounts.push({name,email,password,role,roleLabel:labels[role]});
-localStorage.setItem("securian_accounts",JSON.stringify(accounts));
-toast("Compte créé avec succès");
-render();
+
+function accountForAgent(agentId){return accounts.find(a=>Number(a.agentId)===Number(agentId))}
+function saveAccount(){
+ if(!requireDirection())return;
+ const agentId=Number(document.getElementById("accAgentId").value)||null;
+ const name=document.getElementById("accName").value.trim();
+ const email=document.getElementById("accEmail").value.trim();
+ const phone=document.getElementById("accPhone").value.trim();
+ const username=document.getElementById("accUsername").value.trim();
+ const password=document.getElementById("accPassword").value.trim();
+ const role=document.getElementById("accRole").value;
+ if(!name||!email||!username||!password){toast("Nom, e-mail, identifiant et mot de passe sont obligatoires");return}
+ if(accounts.some(a=>a.username===username && Number(a.id)!==Number(state.accountId))){toast("Cet identifiant est déjà utilisé");return}
+ const labels={direction:"DIRECTION",cadre:"CADRE",salarie:"AGENT SECURIAN",sous:"SOUS-TRAITANT",agentext:"AGENT SOUS-TRAITANT"};
+ const obj={id:state.accountId||Date.now(),name,email,phone,username,password,role,roleLabel:labels[role]||role,status:"Actif",agentId};
+ const i=accounts.findIndex(a=>Number(a.id)===Number(state.accountId));
+ if(i>=0) accounts[i]={...accounts[i],...obj}; else accounts.push(obj);
+ localStorage.setItem("securian_accounts",JSON.stringify(accounts));
+ state.accountId=null;state.modal=null;toast("Compte enregistré");render();
 }
+function openCreateAgentAccount(agentId=null){
+ if(!requireDirection())return;
+ state.accountId=null;state.agentAccountId=agentId;state.modal="account";render();
+}
+function editAccount(i){
+ if(!requireDirection())return;
+ state.accountId=accounts[i]?.id||null;state.agentAccountId=accounts[i]?.agentId||null;state.modal="account";render();
+}
+function removeAccount(i){
+ if(!requireDirection())return;
+ if(!confirm("Supprimer ce compte d'accès ?"))return;
+ accounts.splice(i,1);localStorage.setItem("securian_accounts",JSON.stringify(accounts));render();
+}
+function toggleAccountStatus(i){
+ if(!requireDirection())return;
+ accounts[i].status=accounts[i].status==="Actif"?"Désactivé":"Actif";
+ localStorage.setItem("securian_accounts",JSON.stringify(accounts));render();
+}
+function openMyAccount(){
+ state.modal="myaccount";render();
+}
+function saveMyAccount(){
+ const acc=accounts.find(a=>Number(a.id)===Number(state.accountId));
+ if(!acc){toast("Compte de démonstration : aucun compte réel associé");return}
+ const email=document.getElementById("myEmail").value.trim(),phone=document.getElementById("myPhone").value.trim(),password=document.getElementById("myPassword").value.trim();
+ if(!email){toast("E-mail obligatoire");return}
+ acc.email=email;acc.phone=phone;if(password)acc.password=password;
+ localStorage.setItem("securian_accounts",JSON.stringify(accounts));toast("Compte mis à jour");closeModal();
+}
+function createAgentAccessFromForm(agentId){
+ const enabled=document.getElementById("agentCreateAccount")?.checked;
+ if(!enabled)return;
+ const email=document.getElementById("agentEmail").value.trim();
+ const phone=document.getElementById("agentPhone").value.trim();
+ const username=document.getElementById("agentUsername").value.trim();
+ const password=document.getElementById("agentPassword").value.trim();
+ const name=document.getElementById("agentFirst").value.trim()+" "+document.getElementById("agentLast").value.trim();
+ if(!email||!username||!password){toast("Pour créer le compte agent : e-mail, identifiant et mot de passe obligatoires");return}
+ const old=accountForAgent(agentId);
+ const obj={id:old?.id||Date.now(),name,email,phone,username,password,role:"salarie",roleLabel:"AGENT SECURIAN",status:"Actif",agentId};
+ const i=old?accounts.findIndex(a=>a.id===old.id):-1;
+ if(i>=0)accounts[i]=obj;else accounts.push(obj);
+ localStorage.setItem("securian_accounts",JSON.stringify(accounts));
+}
+function createAccount(){state.accountId=null;saveAccount()}
 function deleteAccount(i){
 if(!confirm("Supprimer ce compte ?")) return;
 accounts.splice(i,1);
