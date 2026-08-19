@@ -23,7 +23,7 @@ button,.btn{border:0;border-radius:11px;padding:12px 14px;font-weight:800;cursor
 .hidden{display:none!important}
 
 .modal{position:fixed;inset:0;background:rgba(0,0,0,.72);z-index:100;display:flex;align-items:flex-end;justify-content:center;padding:10px}.modalbox{width:min(520px,100%);max-height:88vh;overflow:auto;background:#0d1420;border:1px solid #2a3748;border-radius:20px;padding:18px;box-shadow:0 20px 80px rgba(0,0,0,.5)}.formgrid{display:flex;flex-direction:column;gap:9px;margin-top:14px}textarea.field{resize:vertical}.danger{background:#3a171c;color:#ff8f8f;border:1px solid #74313a}.small{font-size:12px;color:var(--muted);line-height:1.45}
-</style>
+<style>.calendar{margin-top:12px}.weekday,.monthgrid{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:4px}.weekday>div{text-align:center;color:var(--muted);font-size:11px;padding:5px}.monthcell{min-height:92px;border:1px solid #263345;border-radius:8px;padding:5px;background:#0d1420;overflow:hidden}.monthcell.empty{opacity:.25}.daynum{font-weight:700;font-size:12px;margin-bottom:4px}.shiftmini{font-size:9px;line-height:1.25;background:#162235;border-radius:5px;padding:3px;margin-bottom:3px;overflow:hidden}.shiftmini b{color:#fff}.monthcell .small{font-size:9px}@media(max-width:480px){.monthcell{min-height:72px;padding:3px}.shiftmini{font-size:8px}.weekday>div{font-size:9px}}</style></style>
 </head>
 <body>
 <div id="root"></div><div id="toast" class="toast"></div>
@@ -235,7 +235,7 @@ root.innerHTML=`<div class="login"><div class="loginbox">
 }
 function doLogin(){state.role=document.getElementById("role").value;state.screen=roles[state.role].dash?"dashboard":"planning";render()}
 function navItems(){
-let base=[["planning","Planning"],["proposals","Propositions"],["pointage","Pointage"],["sites","Sites"]];
+let base=[["planning","Planning"],["proposals","Propositions"],["pointage","Pointage"],["sites","Sites"],["clients","Clients"]];
 if(roles[state.role].dash) base.unshift(["dashboard","Accueil"]);
 if(state.role==="direction"){base.push(["agents","Agents"],["sous","Sous-traitants"],["accounts","Comptes"],["docs","Documents"],["incidents","Incidents"])}
 else if(state.role==="cadre"){base.push(["agents","Agents"],["sous","Sous-traitants"],["docs","Documents"],["incidents","Incidents"])}
@@ -254,6 +254,11 @@ root.innerHTML=`<div class="app">
 
 function modalHTML(){
  if(!state.modal)return "";
+ if(state.modal==="siteplanning"){
+  const site=sitesData.find(s=>s.id===state.siteId);
+  return `<div class="modal" onclick="if(event.target===this)closeModal()"><div class="modalbox"><div class="itemtop"><div class="title">📅 Planning — ${esc(site?site.name:"")}</div><button class="outline" onclick="closeModal()">✕</button></div><div class="small">Client : ${esc((clientsData.find(c=>c.id===Number(site?.clientId))||{}).name||"")}</div><div class="formgrid"><label class="small">Date</label><input id="sitePlanDate" class="field" type="date"><label class="small">Début</label><input id="sitePlanStart" class="field" type="time" value="18:00"><label class="small">Fin</label><input id="sitePlanEnd" class="field" type="time" value="06:00"><label class="small">Agent</label><select id="sitePlanAgent" class="field"><option value="">À pourvoir</option>${agentsData.map(a=>`<option value="${a.id}">${esc(a.first)} ${esc(a.last)}</option>`).join("")}</select></div><button class="primary" style="width:100%;margin-top:12px" onclick="createSiteShift()">➕ AJOUTER LA VACATION</button>${sitePlanning(state.siteId)}</div></div>`;
+ }
+
  if(state.modal==="shift"){
   return `<div class="modal" onclick="if(event.target===this)closeModal()"><div class="modalbox"><div class="itemtop"><div class="title">Créer une vacation</div><button class="outline" onclick="closeModal()">✕</button></div><div class="formgrid"><label class="small">Date</label><input id="shiftDate" class="field" type="date"><label class="small">Début</label><input id="shiftStart" class="field" type="time" value="18:00"><label class="small">Fin</label><input id="shiftEnd" class="field" type="time" value="06:00"><select id="shiftSite" class="field"><option value="">Choisir un site *</option>${sitesData.map(s=>`<option value="${s.id}">${esc(s.name)} — ${esc(s.city)}</option>`).join("")}</select><select id="shiftAgent" class="field"><option value="">À pourvoir / rechercher</option>${agentsData.map(a=>`<option value="${a.id}">${esc(a.first)} ${esc(a.last)}</option>`).join("")}</select></div><div class="small" style="margin-top:10px">Les variables seront calculées automatiquement : nuit 21h–06h, dimanche, férié, habillage et panier ≥ 6 h.</div><button class="primary" style="width:100%;margin-top:12px" onclick="createShift()">CRÉER LA VACATION</button></div></div>`;
  }
@@ -312,20 +317,67 @@ function proposals(){
  const me=agentsData.find(a=>a.first===profiles[state.role]?.person)||agentsData[0];
  const mine=proposalsData.filter(p=>!me||p.agentId===me.id);
  return `<div class="eyebrow">OPPORTUNITÉS</div><div class="h1">Propositions</div><div class="muted">Les prestations proposées à l'agent connecté.</div><div class="list">${mine.length?mine.map(p=>{const sh=shiftsData.find(s=>s.id===p.shiftId),site=sh&&sitesData.find(s=>s.id===sh.siteId);return sh?`<div class="item"><div class="itemtop"><strong>📍 ${esc(site?site.name:"Site")}</strong><span class="badge ${p.status==="Acceptée"?"ok":p.status==="Refusée"?"danger":"warn"}">${esc(p.status)}</span></div><div class="small">📅 ${esc(sh.date)} • ${esc(sh.start)} → ${esc(sh.end)} • ${variableCalc(sh).hours} h</div>${p.status==="En attente"?`<div class="row"><button class="primary" onclick="acceptProposal(${p.id})">✅ ACCEPTER</button><button class="danger" onclick="rejectProposal(${p.id})">REFUSER</button></div>`:""}</div>`:""}).join(""):`<div class="item"><strong>Aucune proposition</strong></div>`}</div>`
-}function planning(){
+}
+function monthGrid(){
+ const base=new Date(state.planMonth||new Date().toISOString().slice(0,7)+"-01"+"T12:00:00");
+ const y=base.getFullYear(),m=base.getMonth();
+ const first=new Date(y,m,1),days=new Date(y,m+1,0).getDate();
+ const labels=["Lun","Mar","Mer","Jeu","Ven","Sam","Dim"];
+ let offset=(first.getDay()+6)%7;
+ let cells=[];
+ for(let i=0;i<offset;i++)cells.push(`<div class="monthcell empty"></div>`);
+ for(let d=1;d<=days;d++){
+   const date=`${y}-${String(m+1).padStart(2,"0")}-${String(d).padStart(2,"0")}`;
+   const day=shiftsData.filter(s=>s.date===date);
+   cells.push(`<div class="monthcell"><div class="daynum">${d}</div>${day.slice(0,4).map(s=>{const site=sitesData.find(x=>x.id===s.siteId),a=agentsData.find(x=>x.id===s.agentId);return `<div class="shiftmini"><b>${esc(s.start)}-${esc(s.end)}</b><br>${esc(site?site.name:"Site")}<br>${esc(a?a.first+" "+a.last:"À pourvoir")}</div>`}).join("")}${day.length>4?`<div class="small">+${day.length-4} autres</div>`:""}</div>`);
+ }
+ return `<div class="calendar"><div class="weekday">${labels.map(x=>`<div>${x}</div>`).join("")}</div><div class="monthgrid">${cells.join("")}</div></div>`;
+}
+function planningView(type){
+ state.planView=type;render();
+}
+
+function planningRows(){
+ const month=state.planMonth||new Date().toISOString().slice(0,7);
+ const selectedSite=state.planSite||"",selectedAgent=state.planAgent||"",selectedClient=state.planClient||"";
+ return shiftsData.filter(s=>{
+  const site=sitesData.find(x=>x.id===s.siteId);
+  return s.date.startsWith(month)&&(!selectedSite||String(s.siteId)===selectedSite)&&(!selectedAgent||String(s.agentId)===selectedAgent)&&(!selectedClient||String(site?.clientId)===selectedClient);
+ }).sort((a,b)=>(a.date+a.start).localeCompare(b.date+b.start));
+}
+function exportPlanningCSV(){
+ const rows=planningRows(), header=["Date","Début","Fin","Client","Site","Agent","Statut","Heures","Heures nuit","Dimanche","Férié","Panier","Habillage (h)"];
+ const csv=[header,...rows.map(s=>{const site=sitesData.find(x=>x.id===s.siteId),client=clientsData.find(c=>c.id===Number(site?.clientId)),agent=agentsData.find(a=>a.id===s.agentId),v=variableCalc(s);return [s.date,s.start,s.end,client?.name||"",site?.name||"",agent?agent.first+" "+agent.last:"À pourvoir",s.status,v.hours,v.night,v.sunday?"Oui":"Non",v.holiday?"Oui":"Non",v.panier,v.habillageHours.toFixed(2)]})]
+ .map(r=>r.map(v=>`"${String(v).replaceAll('"','""')}"`).join(";")).join("\n");
+ const blob=new Blob(["\ufeff"+csv],{type:"text/csv;charset=utf-8"}),url=URL.createObjectURL(blob),a=document.createElement("a");
+ a.href=url;a.download="SECURIAN-planning-"+(state.planMonth||"mois")+".csv";a.click();URL.revokeObjectURL(url);
+}
+function printPlanning(){
+ const rows=planningRows(), month=state.planMonth||new Date().toISOString().slice(0,7);
+ const w=window.open("","_blank"); if(!w){toast("Autorisez les fenêtres popup pour imprimer");return}
+ const body=rows.map(s=>{const site=sitesData.find(x=>x.id===s.siteId),client=clientsData.find(c=>c.id===Number(site?.clientId)),agent=agentsData.find(a=>a.id===s.agentId),v=variableCalc(s);return `<tr><td>${s.date}</td><td>${s.start}</td><td>${s.end}</td><td>${client?.name||""}</td><td>${site?.name||""}</td><td>${agent?agent.first+" "+agent.last:"À pourvoir"}</td><td>${s.status}</td><td>${v.hours} h</td><td>${v.night} h</td></tr>`}).join("");
+ w.document.write(`<html><head><title>SECURIAN - Planning ${month}</title><style>body{font-family:Arial,sans-serif;padding:25px}h1{font-size:22px}table{width:100%;border-collapse:collapse;font-size:11px}th,td{border:1px solid #bbb;padding:6px;text-align:left}th{background:#eee}@media print{button{display:none}}</style></head><body><h1>SECURIAN — Planning ${month}</h1><table><thead><tr><th>Date</th><th>Début</th><th>Fin</th><th>Client</th><th>Site</th><th>Agent</th><th>Statut</th><th>Heures</th><th>Nuit</th></tr></thead><tbody>${body}</tbody></table><script>window.print();<\/script></body></html>`);
+ w.document.close();
+}
+function planning(){
  const siteName=id=>{const s=sitesData.find(x=>x.id===id);return s?s.name+" — "+s.city:"Site inconnu"};
  const agentName=id=>{const a=agentsData.find(x=>x.id===id);return a?a.first+" "+a.last:"À pourvoir"};
- const sorted=[...shiftsData].sort((a,b)=>(a.date+a.start).localeCompare(b.date+b.start));
- return `<div class="eyebrow">ORGANISATION</div><div class="h1">Planning</div><div class="muted">Créez les vacations, affectez les agents et envoyez des propositions.</div>
+ const view=state.planView||"month";
+ const month=state.planMonth||new Date().toISOString().slice(0,7);
+ const monthShifts=shiftsData.filter(s=>s.date.startsWith(month));
+ const selectedSite=state.planSite||"";
+ const selectedAgent=state.planAgent||"";
+ const selectedClient=state.planClient||"";
+ const filtered=monthShifts.filter(s=>{
+   const site=sitesData.find(x=>x.id===s.siteId);
+   return (!selectedSite||String(s.siteId)===selectedSite)&&(!selectedAgent||String(s.agentId)===selectedAgent)&&(!selectedClient||String(site?.clientId)===selectedClient);
+ });
+ return `<div class="eyebrow">ORGANISATION</div><div class="h1">Planning</div><div class="muted">Visualisez le mois par client, site et agent.</div>
  ${canManage()?`<button class="primary" style="width:100%;margin-top:14px" onclick="state.modal='shift';render()">➕ CRÉER UNE VACATION</button>`:""}
- <div class="section">Vue des vacations</div><div class="list">${sorted.map(sh=>{
-  const v=variableCalc(sh), proposals=proposalsData.filter(p=>p.shiftId===sh.id&&p.status==="En attente").length;
-  return `<div class="item"><div class="itemtop"><strong>📅 ${esc(sh.date)} • ${esc(sh.start)} → ${esc(sh.end)}</strong><span class="badge ${sh.status==="Affecté"?"ok":sh.status.includes("Propositions")?"warn":"danger"}">${esc(sh.status)}</span></div>
-  <div class="small">🏢 ${esc(siteName(sh.siteId))} • 👮 ${esc(agentName(sh.agentId))}</div>
-  <div class="small">⏱️ ${v.hours} h • 🌙 ${v.night} h nuit • ${v.sunday?"🟣 dimanche • ":""}${v.holiday?"🔴 férié • ":""}🍽️ ${v.panier} panier • 👕 ${v.habillageHours.toFixed(2)} h habillage</div>
-  <div class="row">${sh.status==="À pourvoir"&&canManage()?`<button class="primary" onclick="proposeShift(${sh.id})">🔎 RECHERCHER DES AGENTS</button>`:""}${sh.status==="En attente de validation"&&canManage()?`<button class="primary" onclick="validateShift(${sh.id})">✅ VALIDER</button>`:""}${proposals&&canManage()?`<button class="outline" onclick="toast(proposals+' proposition(s) en attente')">🔔 ${proposals} réponse(s)</button>`:""}</div></div>`
- }).join("")}</div>
- <div class="section">Variables du planning</div><div class="grid"><div class="stat">⏱️<b>${sorted.reduce((n,s)=>n+variableCalc(s).hours,0).toFixed(1)}</b><span>heures</span></div><div class="stat">🌙<b>${sorted.reduce((n,s)=>n+variableCalc(s).night,0).toFixed(1)}</b><span>heures nuit</span></div><div class="stat">🍽️<b>${sorted.reduce((n,s)=>n+variableCalc(s).panier,0)}</b><span>paniers</span></div><div class="stat">👕<b>${sorted.reduce((n,s)=>n+variableCalc(s).habillageHours,0).toFixed(1)}</b><span>heures habillage</span></div></div>`
+ <div class="formgrid" style="margin-top:14px"><label class="small">Mois</label><input id="planMonth" class="field" type="month" value="${month}" onchange="state.planMonth=this.value;render()"><label class="small">Client</label><select class="field" onchange="state.planClient=this.value;render()"><option value="">Tous les clients</option>${clientsData.map(c=>`<option value="${c.id}" ${selectedClient==String(c.id)?"selected":""}>${esc(c.name)}</option>`).join("")}</select><label class="small">Site</label><select class="field" onchange="state.planSite=this.value;render()"><option value="">Tous les sites</option>${sitesData.map(s=>`<option value="${s.id}" ${selectedSite==String(s.id)?"selected":""}>${esc(s.name)} — ${esc(s.city)}</option>`).join("")}</select><label class="small">Agent</label><select class="field" onchange="state.planAgent=this.value;render()"><option value="">Tous les agents</option>${agentsData.map(a=>`<option value="${a.id}" ${selectedAgent==String(a.id)?"selected":""}>${esc(a.first)} ${esc(a.last)}</option>`).join("")}</select></div>
+ <div class="row"><button class="${view==="month"?"primary":"outline"}" onclick="planningView('month')">📅 Mois</button><button class="${view==="list"?"primary":"outline"}" onclick="planningView('list')">☷ Liste</button></div><div class="row"><button class="outline" onclick="exportPlanningCSV()">⬇️ EXPORTER CSV</button><button class="outline" onclick="printPlanning()">🖨️ IMPRIMER / PDF</button></div>
+ ${view==="month"?monthGrid():`<div class="section">${filtered.length} vacation(s)</div><div class="list">${filtered.map(sh=>{const v=variableCalc(sh);return `<div class="item"><div class="itemtop"><strong>📅 ${esc(sh.date)} • ${esc(sh.start)} → ${esc(sh.end)}</strong><span class="badge ${sh.status==="Affecté"?"ok":"warn"}">${esc(sh.status)}</span></div><div class="small">👤 Client : ${esc((clientsData.find(c=>c.id===Number((sitesData.find(s=>s.id===sh.siteId)||{}).clientId))||{}).name||"")}</div><div class="small">🏢 ${esc(siteName(sh.siteId))} • 👮 ${esc(agentName(sh.agentId))}</div><div class="small">⏱️ ${v.hours} h • 🌙 ${v.night} h nuit • 🍽️ ${v.panier} panier • 👕 ${v.habillageHours.toFixed(2)} h habillage</div><div class="row">${sh.status==="À pourvoir"&&canManage()?`<button class="primary" onclick="proposeShift(${sh.id})">🔎 RECHERCHER DES AGENTS</button>`:""}${sh.status==="En attente de validation"&&canManage()?`<button class="primary" onclick="validateShift(${sh.id})">✅ VALIDER</button>`:""}</div></div>`}).join("")}</div>`}
+ <div class="section">Synthèse du mois</div><div class="grid"><div class="stat">📅<b>${filtered.length}</b><span>vacations</span></div><div class="stat">⏱️<b>${filtered.reduce((n,s)=>n+variableCalc(s).hours,0).toFixed(1)}</b><span>heures</span></div><div class="stat">🌙<b>${filtered.reduce((n,s)=>n+variableCalc(s).night,0).toFixed(1)}</b><span>heures nuit</span></div><div class="stat">🍽️<b>${filtered.reduce((n,s)=>n+variableCalc(s).panier,0)}</b><span>paniers</span></div></div>`;
 }
 function pointage(){return `<div class="eyebrow">PRÉSENCE</div><div class="h1">Pointage</div><div class="card"><div style="font-size:38px">📍</div><div class="title">Centre commercial — Montpellier</div><div class="muted">La géolocalisation est utilisée uniquement pour le pointage et le service.</div><button class="primary" style="width:100%;margin-top:18px" onclick="toast('Service démarré • position enregistrée')">DÉMARRER MON SERVICE</button><button class="outline" style="width:100%;margin-top:9px" onclick="toast('Service terminé • pointage enregistré')">TERMINER MON SERVICE</button><button class="darkbtn" style="width:100%;margin-top:9px" onclick="waze('Centre commercial Montpellier')">🧭 ITINÉRAIRE WAZE</button></div>`}
 
@@ -345,11 +397,28 @@ function clients(){
  if(!canManage())return `<div class="eyebrow">CLIENTS</div><div class="h1">Clients</div><div class="muted">Accès réservé à la Direction.</div>`;
  return `<div class="eyebrow">COMMERCIAL</div><div class="h1">Clients</div><div class="muted">Créez vos clients puis rattachez leurs sites.</div><button class="primary" style="width:100%;margin-top:14px" onclick="openClient()">➕ CRÉER UN CLIENT</button><div class="section">${clientsData.length} client(s)</div><div class="list">${clientsData.map((c,i)=>`<div class="item"><div class="itemtop"><strong>👤 ${esc(c.name)}</strong><span class="badge ok">${esc(c.status)}</span></div><div class="small">${c.contact?esc(c.contact)+" • ":""}${c.phone?"📞 "+esc(c.phone):""} ${c.email?"• ✉️ "+esc(c.email):""}</div><div class="small">🏢 ${sitesData.filter(s=>Number(s.clientId)===c.id).length} site(s)</div><div class="row"><button class="outline" onclick="editClient(${i})">Modifier</button><button class="danger" onclick="removeClient(${i})">Supprimer</button></div></div>`).join("")}</div>`
 }
+
+function openSitePlanning(siteId){
+ if(!requireDirection())return;
+ state.modal="siteplanning";state.siteId=siteId;render();
+}
+function createSiteShift(){
+ if(!requireDirection())return;
+ const siteId=Number(state.siteId), date=esc(document.getElementById("sitePlanDate").value),start=esc(document.getElementById("sitePlanStart").value),end=esc(document.getElementById("sitePlanEnd").value),agentId=Number(document.getElementById("sitePlanAgent").value)||null;
+ if(!date||!start||!end){toast("Date et horaires obligatoires");return}
+ const sh={id:Date.now(),date,start,end,siteId,agentId,status:agentId?"Affecté":"À pourvoir",proposals:[]};
+ if(agentId&&shiftsData.some(x=>x.agentId===agentId&&overlap(x,sh))){toast("Conflit horaire pour cet agent");return}
+ shiftsData.push(sh);savePlanning();state.modal="siteplanning";toast("Vacation ajoutée au planning du site");render();
+}
+function sitePlanning(siteId){
+ const siteShifts=[...shiftsData].filter(s=>s.siteId===siteId).sort((a,b)=>(a.date+a.start).localeCompare(b.date+b.start));
+ return `<div class="section">📅 Planning du site</div><div class="list">${siteShifts.length?siteShifts.map(sh=>{const a=agentsData.find(x=>x.id===sh.agentId),v=variableCalc(sh);return `<div class="item"><div class="itemtop"><strong>${esc(sh.date)} • ${esc(sh.start)} → ${esc(sh.end)}</strong><span class="badge ${sh.status==="Affecté"?"ok":"warn"}">${esc(sh.status)}</span></div><div class="small">👮 ${esc(a?a.first+" "+a.last:"À pourvoir")} • ⏱️ ${v.hours} h • 🌙 ${v.night} h nuit • 🍽️ ${v.panier} panier</div></div>`}).join(""):`<div class="item"><strong>Aucune vacation programmée.</strong></div>`}</div>`;
+}
 function sites(){
 const can=canManage();
 return `<div class="eyebrow">OPÉRATIONS</div><div class="h1">Sites</div><div class="muted">Créez vos sites clients, leurs adresses et leurs consignes.</div>
 ${can?`<button class="primary" style="width:100%;margin-top:14px" onclick="openCreate('site')">➕ CRÉER UN SITE</button>`:""}
-<div class="section">${sitesData.length} site(s)</div><div class="list">${sitesData.map((x,i)=>`<div class="item"><div class="itemtop"><strong>🏢 ${esc(x.name)} — ${esc(x.city)}</strong><span class="badge ok">${esc(x.status)}</span></div><div class="small">👤 Client : ${esc((clientsData.find(c=>c.id===Number(x.clientId))||{}).name||"Non renseigné")}</div><div class="small">${esc(x.type)} • ${esc(x.address||"Adresse non renseignée")}</div><div class="small" style="margin-top:7px">📋 ${esc(x.instructions||"Aucune consigne renseignée")}</div><div class="row"><button class="darkbtn" onclick="waze('${esc(x.address||x.name+" "+x.city)}')">🧭 Waze</button>${can?`<button class="outline" onclick="editSite(${i})">Modifier</button><button class="danger" onclick="removeSite(${i})">Supprimer</button>`:""}</div></div>`).join("")}</div>`}
+<div class="section">${sitesData.length} site(s)</div><div class="list">${sitesData.map((x,i)=>`<div class="item"><div class="itemtop"><strong>🏢 ${esc(x.name)} — ${esc(x.city)}</strong><span class="badge ok">${esc(x.status)}</span></div><div class="small">👤 Client : ${esc((clientsData.find(c=>c.id===Number(x.clientId))||{}).name||"Non renseigné")}</div><div class="small">${esc(x.type)} • ${esc(x.address||"Adresse non renseignée")}</div><div class="small" style="margin-top:7px">📋 ${esc(x.instructions||"Aucune consigne renseignée")}</div><div class="row"><button class="darkbtn" onclick="waze('${esc(x.address||x.name+" "+x.city)}')">🧭 Waze</button>${can?`<button class="primary" onclick="openSitePlanning(${x.id})">📅 PLANNING</button><button class="outline" onclick="editSite(${i})">Modifier</button><button class="danger" onclick="removeSite(${i})">Supprimer</button>`:""}</div></div>`).join("")}</div>`}
 function agents(){
 const can=canManage();
 return `<div class="eyebrow">RESSOURCES HUMAINES</div><div class="h1">${state.role==="sous"?"Mes agents":"Agents"}</div><div class="muted">Fiches agents, carte professionnelle, coordonnées et affectations.</div>
