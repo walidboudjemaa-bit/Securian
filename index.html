@@ -21,6 +21,8 @@ button,.btn{border:0;border-radius:11px;padding:12px 14px;font-weight:800;cursor
 .login{min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px}.loginbox{width:100%;max-width:390px;background:var(--card);border:1px solid var(--line);border-radius:22px;padding:25px;box-shadow:0 20px 60px #0008}.loginbox img{width:120px;height:120px;display:block;margin:0 auto 12px;object-fit:contain}.loginbox h1{text-align:center;margin:0 0 4px}.loginbox p{text-align:center;color:var(--muted);font-size:13px}.field{margin-top:14px}.field label{display:block;color:#c9d1df;font-size:12px;margin-bottom:6px}.field input,.field select{width:100%;padding:13px;border-radius:11px;border:1px solid #2b3748;background:#080d15;color:#fff;font-size:15px}.demo{margin-top:14px;font-size:11px;color:var(--muted);line-height:1.6}
 .toast{position:fixed;left:50%;bottom:92px;transform:translateX(-50%);background:#172333;border:1px solid #304057;padding:10px 14px;border-radius:12px;display:none;z-index:30;font-size:12px}
 .hidden{display:none!important}
+
+.modal{position:fixed;inset:0;background:rgba(0,0,0,.72);z-index:100;display:flex;align-items:flex-end;justify-content:center;padding:10px}.modalbox{width:min(520px,100%);max-height:88vh;overflow:auto;background:#0d1420;border:1px solid #2a3748;border-radius:20px;padding:18px;box-shadow:0 20px 80px rgba(0,0,0,.5)}.formgrid{display:flex;flex-direction:column;gap:9px;margin-top:14px}textarea.field{resize:vertical}.danger{background:#3a171c;color:#ff8f8f;border:1px solid #74313a}.small{font-size:12px;color:var(--muted);line-height:1.45}
 </style>
 </head>
 <body>
@@ -34,8 +36,66 @@ const roles={
  sous:{label:"Responsable sous-traitant",name:"PROTECT PLUS",dash:false},
  agentext:{label:"Agent sous-traitant",name:"Mohamed",dash:false}
 };
-let state={role:"direction",screen:"dashboard"};
+let state={role:"direction",screen:"dashboard",modal:null,editType:null,editIndex:null};
+
 let accounts=JSON.parse(localStorage.getItem("securian_accounts")||"[]");
+let sitesData=JSON.parse(localStorage.getItem("securian_sites")||"null")||[
+ {id:1,name:"Centre commercial",city:"Montpellier",address:"Montpellier, France",type:"Centre commercial",status:"Actif",instructions:"Contrôle des accès, rondes toutes les 2 heures."},
+ {id:2,name:"Entrepôt",city:"Sète",address:"Sète, France",type:"Entrepôt",status:"Actif",instructions:"Contrôle quai et fermeture des accès."},
+ {id:3,name:"Hôtel",city:"Béziers",address:"Béziers, France",type:"Hôtel",status:"Actif",instructions:"Accueil, rondes et contrôle des parties communes."}
+];
+let agentsData=JSON.parse(localStorage.getItem("securian_agents")||"null")||[
+ {id:1,first:"Ahmed",last:"B.",type:"Agent SECURIAN",phone:"",email:"",card:"Valide",status:"Actif",site:"Centre commercial — Montpellier"},
+ {id:2,first:"Karim",last:"D.",type:"Agent SECURIAN",phone:"",email:"",card:"28 jours",status:"Actif",site:"Entrepôt — Sète"},
+ {id:3,first:"Sofiane",last:"M.",type:"Agent SECURIAN",phone:"",email:"",card:"Valide",status:"Actif",site:"Hôtel — Béziers"}
+];
+let subcontractorsData=JSON.parse(localStorage.getItem("securian_subcontractors")||"null")||[
+ {id:1,name:"PROTECT PLUS",contact:"",phone:"",email:"",agents:8,status:"Actif"},
+ {id:2,name:"SECURITY PARTNER",contact:"",phone:"",email:"",agents:5,status:"Actif"},
+ {id:3,name:"SUD PROTECTION",contact:"",phone:"",email:"",agents:11,status:"Actif"}
+];
+function saveData(){
+ localStorage.setItem("securian_sites",JSON.stringify(sitesData));
+ localStorage.setItem("securian_agents",JSON.stringify(agentsData));
+ localStorage.setItem("securian_subcontractors",JSON.stringify(subcontractorsData));
+}
+function esc(v){return String(v??"").replace(/[&<>"']/g,m=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#039;"}[m]))}
+function canManage(){return state.role==="direction"}
+function requireDirection(){if(!canManage()){toast("Accès réservé à la Direction");return false}return true}
+function openCreate(type){if(!requireDirection())return;state.modal=type;render()}
+function closeModal(){state.modal=null;render()}
+function editSite(i){if(!requireDirection())return;state.editType="site";state.editIndex=i;state.modal="site";render()}
+function editAgent(i){if(!requireDirection())return;state.editType="agent";state.editIndex=i;state.modal="agent";render()}
+function editSub(i){if(!requireDirection())return;state.editType="sub";state.editIndex=i;state.modal="sub";render()}
+function removeSite(i){if(!requireDirection())return;if(!confirm("Supprimer ce site ?"))return;sitesData.splice(i,1);saveData();render()}
+function removeAgent(i){if(!requireDirection())return;if(!confirm("Supprimer cet agent ?"))return;agentsData.splice(i,1);saveData();render()}
+function removeSub(i){if(!requireDirection())return;if(!confirm("Supprimer ce sous-traitant ?"))return;subcontractorsData.splice(i,1);saveData();render()}
+function submitEntity(type){
+ if(!requireDirection())return;
+ if(type==="site"){
+  const name=esc(document.getElementById("siteName").value.trim()),city=esc(document.getElementById("siteCity").value.trim()),address=esc(document.getElementById("siteAddress").value.trim()),kind=esc(document.getElementById("siteType").value),instructions=esc(document.getElementById("siteInstructions").value.trim());
+  if(!name||!city){toast("Nom du site et ville obligatoires");return}
+  const obj={id:Date.now(),name,city,address,type:kind,status:"Actif",instructions};
+  if(state.editType==="site" && state.editIndex!=null) sitesData[state.editIndex]={...sitesData[state.editIndex],...obj,id:sitesData[state.editIndex].id};
+  else sitesData.push(obj);
+ }
+ if(type==="agent"){
+  const first=esc(document.getElementById("agentFirst").value.trim()),last=esc(document.getElementById("agentLast").value.trim()),phone=esc(document.getElementById("agentPhone").value.trim()),email=esc(document.getElementById("agentEmail").value.trim()),card=esc(document.getElementById("agentCard").value),site=esc(document.getElementById("agentSite").value);
+  if(!first||!last){toast("Nom et prénom obligatoires");return}
+  const obj={id:Date.now(),first,last,type:"Agent SECURIAN",phone,email,card,status:"Actif",site};
+  if(state.editType==="agent" && state.editIndex!=null) agentsData[state.editIndex]={...agentsData[state.editIndex],...obj,id:agentsData[state.editIndex].id};
+  else agentsData.push(obj);
+ }
+ if(type==="sub"){
+  const name=esc(document.getElementById("subName").value.trim()),contact=esc(document.getElementById("subContact").value.trim()),phone=esc(document.getElementById("subPhone").value.trim()),email=esc(document.getElementById("subEmail").value.trim());
+  if(!name){toast("Nom du sous-traitant obligatoire");return}
+  const obj={id:Date.now(),name,contact,phone,email,agents:0,status:"Actif"};
+  if(state.editType==="sub" && state.editIndex!=null) subcontractorsData[state.editIndex]={...subcontractorsData[state.editIndex],...obj,id:subcontractorsData[state.editIndex].id};
+  else subcontractorsData.push(obj);
+ }
+ state.modal=null;state.editType=null;state.editIndex=null;saveData();toast("Enregistrement effectué");render();
+}
+
 const icons={dashboard:"⌂",planning:"▣",pointage:"⌖",sites:"⌂",agents:"♙",sous:"♙",docs:"▤",main:"☷",incidents:"⚠"};
 
 function toast(t){const e=document.getElementById("toast");e.textContent=t;e.style.display="block";setTimeout(()=>e.style.display="none",1800)}
@@ -67,9 +127,28 @@ const r=roles[state.role];
 root.innerHTML=`<div class="app">
 <header class="header"><img class="logo" src="${logo}"><div><div class="brand">SECURIAN</div><div class="tag">${r.label.toUpperCase()} • ${r.name}</div></div><button class="outline" style="margin-left:auto;padding:8px 10px;font-size:11px" onclick="login()">Quitter</button></header>
 <main class="content">${screen()}</main>
-<nav class="nav">${navItems().slice(0,5).map(([id,label])=>`<button class="${state.screen===id?'active':''}" onclick="go('${id}')"><span class="ico">${icons[id]||'•'}</span>${label}</button>`).join("")}</nav>
+<nav class="nav">${navItems().slice(0,5).map(([id,label])=>`<button class="${state.screen===id?'active':''}" onclick="go('${id}')"><span class="ico">${icons[id]||'•'}</span>${label}</button>`).join("")}</nav>${modalHTML()}
 </div>`;
 }
+
+function modalHTML(){
+ if(!state.modal)return "";
+ const t=state.modal, editing=state.editIndex!=null;
+ if(t==="site"){
+  const x=editing?sitesData[state.editIndex]:{name:"",city:"",address:"",type:"Site client",instructions:""};
+  return `<div class="modal" onclick="if(event.target===this)closeModal()"><div class="modalbox"><div class="itemtop"><div class="title">${editing?"Modifier le site":"Créer un site"}</div><button class="outline" onclick="closeModal()">✕</button></div><div class="formgrid"><input id="siteName" class="field" placeholder="Nom du site *" value="${esc(x.name)}"><input id="siteCity" class="field" placeholder="Ville *" value="${esc(x.city)}"><input id="siteAddress" class="field" placeholder="Adresse complète" value="${esc(x.address)}"><select id="siteType" class="field"><option>Site client</option><option>Centre commercial</option><option>Entrepôt</option><option>Hôtel</option><option>Chantier</option><option>Résidence</option><option>Autre</option></select><textarea id="siteInstructions" class="field" rows="4" placeholder="Consignes du site">${esc(x.instructions)}</textarea></div><button class="primary" style="width:100%;margin-top:12px" onclick="submitEntity('site')">${editing?"ENREGISTRER":"CRÉER LE SITE"}</button></div></div>`;
+ }
+ if(t==="agent"){
+  const x=editing?agentsData[state.editIndex]:{first:"",last:"",phone:"",email:"",card:"Valide",site:""};
+  return `<div class="modal" onclick="if(event.target===this)closeModal()"><div class="modalbox"><div class="itemtop"><div class="title">${editing?"Modifier l'agent":"Créer un agent"}</div><button class="outline" onclick="closeModal()">✕</button></div><div class="formgrid"><input id="agentFirst" class="field" placeholder="Prénom *" value="${esc(x.first)}"><input id="agentLast" class="field" placeholder="Nom *" value="${esc(x.last)}"><input id="agentPhone" class="field" placeholder="Téléphone" value="${esc(x.phone)}" type="tel"><input id="agentEmail" class="field" placeholder="E-mail" value="${esc(x.email)}" type="email"><select id="agentCard" class="field"><option ${x.card==="Valide"?"selected":""}>Valide</option><option ${x.card==="28 jours"?"selected":""}>28 jours</option><option>60 jours</option><option>Expirée</option></select><select id="agentSite" class="field"><option value="">Aucun site affecté</option>${sitesData.map(s=>`<option ${x.site===s.name+" — "+s.city?"selected":""}>${esc(s.name)} — ${esc(s.city)}</option>`).join("")}</select></div><button class="primary" style="width:100%;margin-top:12px" onclick="submitEntity('agent')">${editing?"ENREGISTRER":"CRÉER L'AGENT"}</button></div></div>`;
+ }
+ if(t==="sub"){
+  const x=editing?subcontractorsData[state.editIndex]:{name:"",contact:"",phone:"",email:""};
+  return `<div class="modal" onclick="if(event.target===this)closeModal()"><div class="modalbox"><div class="itemtop"><div class="title">${editing?"Modifier le sous-traitant":"Créer un sous-traitant"}</div><button class="outline" onclick="closeModal()">✕</button></div><div class="formgrid"><input id="subName" class="field" placeholder="Entreprise *" value="${esc(x.name)}"><input id="subContact" class="field" placeholder="Contact responsable" value="${esc(x.contact)}"><input id="subPhone" class="field" placeholder="Téléphone" value="${esc(x.phone)}" type="tel"><input id="subEmail" class="field" placeholder="E-mail" value="${esc(x.email)}" type="email"></div><button class="primary" style="width:100%;margin-top:12px" onclick="submitEntity('sub')">${editing?"ENREGISTRER":"CRÉER LE SOUS-TRAITANT"}</button></div></div>`;
+ }
+ return "";
+}
+
 function go(s){state.screen=s;render()}
 function screen(){
 switch(state.screen){
@@ -88,41 +167,21 @@ default:return planning()
 function dashboard(){return `<div class="eyebrow">TABLEAU DE BORD</div><div class="h1">Bonjour ${roles[state.role].name} 👋</div><div class="muted">Vue opérationnelle SECURIAN</div>
 <div class="grid"><div class="stat"><div>👮</div><div class="num">42</div><div class="label">Agents</div></div><div class="stat"><div>🏢</div><div class="num">18</div><div class="label">Sites</div></div><div class="stat"><div>🟢</div><div class="num">35</div><div class="label">En service</div></div><div class="stat"><div>🪪</div><div class="num">3</div><div class="label">Documents à renouveler</div></div></div>
 <div class="section">Service en cours</div><div class="card"><div class="title">Centre commercial — Montpellier</div><div class="muted">Ahmed B. • SECURIAN • 18:00 → 06:00</div><div class="row"><button class="darkbtn" onclick="waze('Centre commercial Montpellier')">🧭 Ouvrir Waze</button><span class="badge ok">POINTAGE OK</span></div></div>
-<div class="section">Alertes</div><div class="card"><div>🔴 1 carte professionnelle expirée</div><div style="margin-top:9px">🟠 2 habilitations à renouveler sous 30 jours</div><div style="margin-top:9px">⚠️ 2 anomalies de pointage</div></div>`}
+<div class="section">Alertes</div><div class="card"><div>🔴 1 carte professionnelle expirée</div><div style="margin-top:9px">🟠 2 habilitations à renouveler sous 30 jours</div><div style="margin-top:9px">⚠️ 2 anomalies de pointage</div></div><div class="section">Administration</div><div class="grid"><button class="card" style="text-align:left;color:#fff" onclick="go('sites')">🏢<br><b>Gérer les sites</b><br><span class="small">Créer, modifier, supprimer</span></button><button class="card" style="text-align:left;color:#fff" onclick="go('agents')">👮<br><b>Gérer les agents</b><br><span class="small">Créer et affecter</span></button><button class="card" style="text-align:left;color:#fff" onclick="go('sous')">🤝<br><b>Sous-traitants</b><br><span class="small">Entreprises partenaires</span></button><button class="card" style="text-align:left;color:#fff" onclick="go('accounts')">🔐<br><b>Comptes</b><br><span class="small">Créer les accès</span></button></div>`}
 function planning(){return `<div class="eyebrow">ORGANISATION</div><div class="h1">Planning</div><div class="muted">Services, affectations et remplacements.</div><div class="section">Aujourd'hui — 19 août</div><div class="list">
 ${["18:00–06:00 • Centre commercial • Ahmed B. — SECURIAN","06:00–18:00 • Entrepôt • Karim D. — SECURIAN","18:00–06:00 • Hôtel • Mohamed — PROTECT PLUS"].map(x=>`<div class="item"><strong>${x}</strong><div class="small">Affectation • Consignes • Pointage</div></div>`).join("")}</div>
 <div class="card" style="margin-top:14px"><div class="title">🔄 Besoin d'un remplaçant ?</div><div class="muted">Recherche par disponibilité, qualification, validité des documents et proximité.</div><button class="primary" style="margin-top:12px" onclick="toast('Recherche de remplaçants lancée')">RECHERCHER</button></div>`}
 function pointage(){return `<div class="eyebrow">PRÉSENCE</div><div class="h1">Pointage</div><div class="card"><div style="font-size:38px">📍</div><div class="title">Centre commercial — Montpellier</div><div class="muted">La géolocalisation est utilisée uniquement pour le pointage et le service.</div><button class="primary" style="width:100%;margin-top:18px" onclick="toast('Service démarré • position enregistrée')">DÉMARRER MON SERVICE</button><button class="outline" style="width:100%;margin-top:9px" onclick="toast('Service terminé • pointage enregistré')">TERMINER MON SERVICE</button><button class="darkbtn" style="width:100%;margin-top:9px" onclick="waze('Centre commercial Montpellier')">🧭 ITINÉRAIRE WAZE</button></div>`}
-function sites(){return `<div class="eyebrow">OPÉRATIONS</div><div class="h1">Sites</div><div class="list">${["Centre commercial — Montpellier","Entrepôt — Sète","Hôtel — Béziers"].map(x=>`<div class="item"><div class="itemtop"><strong>${x}</strong><span class="badge ok">ACTIF</span></div><div class="small">Consignes • Planning • Agents affectés</div><div class="row"><button class="darkbtn" onclick="waze('${x}')">🧭 Waze</button><button class="outline" onclick="toast('Consignes ouvertes')">Consignes</button></div></div>`).join("")}</div>`}
-function agents(){return `<div class="eyebrow">RESSOURCES HUMAINES</div><div class="h1">${state.role==="sous"?"Mes agents":"Agents"}</div><div class="list">${["Ahmed B.","Karim D.","Sofiane M.","Mohamed — PROTECT PLUS"].map((x,i)=>`<div class="item"><div class="itemtop"><strong>${x}</strong><span class="badge ${i===1?'warn':'ok'}">${i===1?'28 JOURS':'VALIDE'}</span></div><div class="small">Carte pro • Formations • Planning • Sites autorisés</div></div>`).join("")}</div>`}
-function accountsScreen(){
-return `<div class="eyebrow">ADMINISTRATION</div>
-<div class="h1">Comptes utilisateurs</div>
-<div class="muted">Créez et gérez les accès des cadres et des agents depuis votre espace Direction.</div>
-
-<div class="card" style="margin-top:16px">
-<div class="title">➕ Créer un compte</div>
-<div class="muted">Le compte sera associé à un profil et à des droits d'accès.</div>
-<div style="margin-top:14px;display:flex;flex-direction:column;gap:9px">
-<input id="accName" placeholder="Nom et prénom" class="field">
-<input id="accEmail" placeholder="E-mail / identifiant" class="field" type="email">
-<select id="accRole" class="field">
-<option value="cadre">Cadre / Responsable</option>
-<option value="salarie">Agent SECURIAN</option>
-<option value="sous">Responsable sous-traitant</option>
-<option value="agentext">Agent sous-traitant</option>
-</select>
-<input id="accPassword" placeholder="Mot de passe temporaire" class="field" type="text">
-<button class="primary" onclick="createAccount()">CRÉER LE COMPTE</button>
-</div></div>
-
-<div class="section">Comptes créés</div>
-<div class="list">
-${accounts.length?accounts.map((a,i)=>`<div class="item"><div class="itemtop"><strong>${a.name}</strong><span class="badge ok">${a.roleLabel}</span></div><div class="small">${a.email} • Compte actif</div><div class="row"><button class="outline" onclick="toast('Modification du compte ${i+1} à connecter')">Modifier</button><button class="danger" onclick="deleteAccount(${i})">Supprimer</button></div></div>`).join(""):`<div class="item"><strong>Aucun compte supplémentaire</strong><div class="small">Créez le premier compte cadre ou agent ci-dessus.</div></div>`}
-</div>
-
-<div class="card" style="margin-top:14px"><div class="title">🔐 Droits d'accès</div><div class="small">Direction : accès complet • Cadre : gestion opérationnelle • Agent : planning, pointage, sites et consignes • Sous-traitant : uniquement son périmètre.</div></div>`;
-}
+function sites(){
+const can=canManage();
+return `<div class="eyebrow">OPÉRATIONS</div><div class="h1">Sites</div><div class="muted">Créez vos sites clients, leurs adresses et leurs consignes.</div>
+${can?`<button class="primary" style="width:100%;margin-top:14px" onclick="openCreate('site')">➕ CRÉER UN SITE</button>`:""}
+<div class="section">${sitesData.length} site(s)</div><div class="list">${sitesData.map((x,i)=>`<div class="item"><div class="itemtop"><strong>🏢 ${esc(x.name)} — ${esc(x.city)}</strong><span class="badge ok">${esc(x.status)}</span></div><div class="small">${esc(x.type)} • ${esc(x.address||"Adresse non renseignée")}</div><div class="small" style="margin-top:7px">📋 ${esc(x.instructions||"Aucune consigne renseignée")}</div><div class="row"><button class="darkbtn" onclick="waze('${esc(x.address||x.name+" "+x.city)}')">🧭 Waze</button>${can?`<button class="outline" onclick="editSite(${i})">Modifier</button><button class="danger" onclick="removeSite(${i})">Supprimer</button>`:""}</div></div>`).join("")}</div>`}
+function agents(){
+const can=canManage();
+return `<div class="eyebrow">RESSOURCES HUMAINES</div><div class="h1">${state.role==="sous"?"Mes agents":"Agents"}</div><div class="muted">Fiches agents, carte professionnelle, coordonnées et affectations.</div>
+${can?`<button class="primary" style="width:100%;margin-top:14px" onclick="openCreate('agent')">➕ CRÉER UN AGENT</button>`:""}
+<div class="section">${agentsData.length} agent(s)</div><div class="list">${agentsData.map((x,i)=>`<div class="item"><div class="itemtop"><strong>👮 ${esc(x.first)} ${esc(x.last)}</strong><span class="badge ${x.card==="Valide"?"ok":x.card==="Expirée"?"danger":"warn"}">${esc(x.card)}</span></div><div class="small">${esc(x.type)} • ${esc(x.status)}</div><div class="small">${x.phone?"📞 "+esc(x.phone):"📞 Non renseigné"} • ${x.email?"✉️ "+esc(x.email):"✉️ Non renseigné"}</div><div class="small">🏢 ${esc(x.site||"Aucun site affecté")}</div>${can?`<div class="row"><button class="outline" onclick="editAgent(${i})">Modifier</button><button class="danger" onclick="removeAgent(${i})">Supprimer</button></div>`:""}</div>`).join("")}</div>`}
 function createAccount(){
 const name=document.getElementById("accName").value.trim();
 const email=document.getElementById("accEmail").value.trim();
@@ -141,7 +200,12 @@ accounts.splice(i,1);
 localStorage.setItem("securian_accounts",JSON.stringify(accounts));
 render();
 }
-function sous(){return `<div class="eyebrow">PARTENAIRES</div><div class="h1">Sous-traitants</div><div class="list">${["PROTECT PLUS — 8 agents","SECURITY PARTNER — 5 agents","SUD PROTECTION — 11 agents"].map((x,i)=>`<div class="item"><div class="itemtop"><strong>${x}</strong><span class="badge ${i===2?'warn':'ok'}">${i===2?'ÉCHÉANCE':'ACTIF'}</span></div><div class="small">Contrat • Assurances • Documents • Agents • Sites</div></div>`).join("")}</div>`}
+function sous(){
+const can=canManage();
+return `<div class="eyebrow">PARTENAIRES</div><div class="h1">Sous-traitants</div><div class="muted">Entreprises partenaires et leurs responsables.</div>
+${can?`<button class="primary" style="width:100%;margin-top:14px" onclick="openCreate('sub')">➕ CRÉER UN SOUS-TRAITANT</button>`:""}
+<div class="section">${subcontractorsData.length} partenaire(s)</div><div class="list">${subcontractorsData.map((x,i)=>`<div class="item"><div class="itemtop"><strong>🤝 ${esc(x.name)}</strong><span class="badge ok">${esc(x.status)}</span></div><div class="small">${x.contact?esc(x.contact)+" • ":""}${x.agents} agent(s)</div><div class="small">${x.phone?"📞 "+esc(x.phone):"📞 Non renseigné"} • ${x.email?"✉️ "+esc(x.email):"✉️ Non renseigné"}</div>${can?`<div class="row"><button class="outline" onclick="editSub(${i})">Modifier</button><button class="danger" onclick="removeSub(${i})">Supprimer</button></div>`:""}</div>`).join("")}</div>`}
+
 function docs(){return `<div class="eyebrow">CONFORMITÉ</div><div class="h1">Documents & alertes</div><div class="card"><div>🔴 <b>1</b> document expiré</div><div style="margin-top:10px">🟠 <b>2</b> échéances à 30 jours</div><div style="margin-top:10px">🟢 <b>64</b> documents conformes</div></div><div class="section">Rappels automatiques</div><div class="list">${["Carte professionnelle CNAPS","MAC / recyclage","SST","Assurance sous-traitant"].map((x,i)=>`<div class="item"><strong>${x}</strong><div class="small">${i===0?"Alerte 30 jours • 60 jours • 90 jours":"Suivi d'échéance activé"}</div></div>`).join("")}</div>`}
 function maincourante(){return `<div class="eyebrow">TRANSMISSIONS</div><div class="h1">Main courante</div><div class="card"><div class="title">Nouvelle transmission</div><div class="muted">Événement • Observation • Photo • Heure • Site • Agent</div><button class="primary" style="width:100%;margin-top:16px" onclick="toast('Formulaire de transmission ouvert')">NOUVELLE TRANSMISSION</button></div><div class="section">Dernières transmissions</div><div class="list"><div class="item"><strong>22:14 — Ronde effectuée</strong><div class="small">Centre commercial • Ahmed B.</div></div><div class="item"><strong>20:05 — Porte contrôlée</strong><div class="small">Entrepôt • Karim D.</div></div></div>`}
 function incidents(){return `<div class="eyebrow">SÉCURITÉ</div><div class="h1">Incidents</div><div class="card"><div class="title">🚨 Déclarer un incident</div><div class="muted">Rapport, photos, localisation du site et transmission au responsable.</div><button class="danger" style="width:100%;margin-top:16px" onclick="toast('Déclaration d’incident ouverte')">SIGNALER UN INCIDENT</button></div><div class="section">Historique</div><div class="item"><strong>Incident #2026-018</strong><div class="small">Statut : en cours de traitement • Responsable notifié</div></div>`}
