@@ -129,24 +129,43 @@ function variableCalc(sh){
  let [h1,m1]=sh.start.split(":").map(Number),[h2,m2]=sh.end.split(":").map(Number);
  let start=h1*60+m1,end=h2*60+m2;if(end<=start)end+=1440;
  const dur=(end-start)/60;
- let night=0, sunday=0, holiday=0;
+ let dayHours=0,nightHours=0,sundayDayHours=0,sundayNightHours=0,holidayHours=0;
  const holidays=["2026-01-01","2026-04-06","2026-05-01","2026-05-08","2026-05-14","2026-05-25","2026-07-14","2026-08-15","2026-11-01","2026-11-11","2026-12-25"];
  for(let x=start;x<end;x++){
    const minute=x%1440;
    const dayOffset=Math.floor(x/1440);
    const date=new Date(sh.date+"T12:00:00");date.setDate(date.getDate()+dayOffset);
+   const day=date.getDay(); // 0 dimanche, 6 samedi
    const dateStr=date.toISOString().slice(0,10);
-   if(minute>=21*60||minute<6*60)night+=1;
-   if(date.getDay()===0)sunday+=1;
-   if(holidays.includes(dateStr))holiday+=1;
+   const isSunday=day===0;
+   const isHoliday=holidays.includes(dateStr);
+
+   // Règles SECURIAN :
+   // Jour : lundi à samedi 06:00–21:00
+   // Nuit : lundi à vendredi 21:00–06:00 + samedi 21:00–24:00
+   // Dimanche nuit : 00:00–06:00 + 21:00–24:00
+   // Dimanche jour : 06:00–21:00
+   const isNight = minute>=21*60 || minute<6*60;
+   if(isSunday){
+     if(isNight) sundayNightHours+=1/60;
+     else sundayDayHours+=1/60;
+   }else{
+     if(isNight) nightHours+=1/60;
+     else dayHours+=1/60;
+   }
+   if(isHoliday) holidayHours+=1/60;
  }
+ const sundayHours=sundayDayHours+sundayNightHours;
  return {
    hours:dur,
-   night:night/60,
-   sundayHours:sunday/60,
-   holidayHours:holiday/60,
-   sunday:sunday>0,
-   holiday:holiday>0,
+   dayHours,
+   night:nightHours+sundayNightHours,
+   sundayDayHours,
+   sundayNightHours,
+   sundayHours,
+   holidayHours,
+   sunday:sundayHours>0,
+   holiday:holidayHours>0,
    panier:dur>=6?1:0,
    habillageHours:dur*(10/60)
  };
@@ -557,7 +576,7 @@ function openPlanningPrint(kind,rows,month,entityId){
    const v=variableCalc(s);
    total+=v.hours; totalNight+=v.night; totalSun+=v.sundayHours||0; totalHoliday+=v.holidayHours||0;
    const common=`<td>${frDay(date)}</td><td>${frDate(date)}</td><td>${esc(s.start)}-${esc(s.end)}</td><td>${fmt(v.hours)}</td>`;
-   const variables=`<td>${v.hours?fmt(v.hours):""}</td><td>${v.night?fmt(v.night):""}</td><td>${v.sundayHours?fmt(v.sundayHours):""}</td><td>${v.sunday&&v.night?fmt(Math.min(v.night,v.sundayHours)):""}</td><td>${v.holidayHours?fmt(v.holidayHours):""}</td><td>${v.holiday&&v.night?fmt(Math.min(v.night,v.holidayHours)):""}</td>`;
+   const variables=`<td>${v.hours?fmt(v.hours):""}</td><td>${v.night?fmt(v.night):""}</td><td>${v.sundayHours?fmt(v.sundayHours):""}</td><td>${v.sundayNightHours?fmt(v.sundayNightHours):""}</td><td>${v.holidayHours?fmt(v.holidayHours):""}</td><td>${v.holiday&&v.night?fmt(Math.min(v.night,v.holidayHours)):""}</td>`;
    if(kind==="site"){
     return `<tr>${common}<td>${esc(client?.name||"")}</td><td>${esc(site?.name||"")}</td><td>${subAgent?esc(subcontractor?.name||"Sous-traitant")+" — "+esc(subAgent.first+" "+subAgent.last):esc(agent?agent.first+" "+agent.last:"À pourvoir")}</td>${variables}</tr>`;
    }
@@ -594,7 +613,7 @@ function openPlanningPrint(kind,rows,month,entityId){
  </style></head><body>
  <div class="head"><img src="${logo}" alt="SECURIAN"><div><h1>SECURIAN</h1><div class="range">${range}</div><div class="tel">${esc(companySettings.address)}</div><div class="tel">TEL : 06.10.68.63.47</div><div class="entity">${entityTitle}</div></div><div></div></div>
  <table><thead><tr>${header}</tr></thead><tbody>${body}${totals}</tbody></table>
- <div class="foot">${esc(companySettings.planningDisclaimer)}<br>${esc(companySettings.cnaps)}<br>J = heures planifiées • N = nuit 21h00–06h00 • D = dimanche • F = férié • DN/FN = nuit sur dimanche/férié • 🤝 = sous-traitant.</div>
+ <div class="foot">${esc(companySettings.planningDisclaimer)}<br>${esc(companySettings.cnaps)}<br>J = heures de jour (lun-sam 06h00–21h00) • N = heures de nuit (lun-ven 21h00–06h00 + sam 21h00–24h00) • DJ = dimanche jour 06h00–21h00 • DN = dimanche nuit 00h00–06h00 et 21h00–24h00 • F = férié • 🤝 = sous-traitant.</div>
  <script>window.addEventListener('load',()=>setTimeout(()=>window.print(),250));<\/script></body></html>`);
  w.document.close();
 }
