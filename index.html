@@ -85,6 +85,87 @@ function cardReminder(dateStr){
  const n=cardDays(dateStr);
  return n!==null && n>=0 && n<=90;
 }
+
+let shiftsData=JSON.parse(localStorage.getItem("securian_shifts")||"null")||[
+ {id:1,date:"2026-08-21",start:"18:00",end:"06:00",siteId:1,agentId:1,status:"Affecté",proposals:[]},
+ {id:2,date:"2026-08-22",start:"06:00",end:"18:00",siteId:2,agentId:null,status:"À pourvoir",proposals:[]}
+];
+let proposalsData=JSON.parse(localStorage.getItem("securian_proposals")||"null")||[];
+function savePlanning(){
+ localStorage.setItem("securian_shifts",JSON.stringify(shiftsData));
+ localStorage.setItem("securian_proposals",JSON.stringify(proposalsData));
+}
+function shiftDuration(s,e){
+ let [h1,m1]=s.split(":").map(Number),[h2,m2]=e.split(":").map(Number);
+ let a=h1*60+m1,b=h2*60+m2;if(b<=a)b+=1440;
+ return (b-a)/60;
+}
+function overlap(a,b){
+ const startA=new Date(a.date+"T"+a.start),endA=new Date(a.date+"T"+a.end);
+ if(endA<=startA)endA.setDate(endA.getDate()+1);
+ const startB=new Date(b.date+"T"+b.start),endB=new Date(b.date+"T"+b.end);
+ if(endB<=startB)endB.setDate(endB.getDate()+1);
+ return startA<endB&&startB<endA;
+}
+function variableCalc(sh){
+ const dur=shiftDuration(sh.start,sh.end);
+ let [h,m]=sh.start.split(":").map(Number), [eh,em]=sh.end.split(":").map(Number);
+ let start=h*60+m,end=eh*60+em;if(end<=start)end+=1440;
+ let night=0;
+ for(let x=start;x<end;x++){
+   let minute=x%1440;
+   if(minute>=21*60||minute<6*60)night+=1;
+ }
+ const date=new Date(sh.date+"T12:00:00");
+ const sunday=date.getDay()===0;
+ const holidays=["2026-01-01","2026-04-06","2026-05-01","2026-05-08","2026-05-14","2026-05-25","2026-07-14","2026-08-15","2026-11-01","2026-11-11","2026-12-25"];
+ const holiday=holidays.includes(sh.date);
+ return {hours:dur,night:night/60,sunday,holiday,panier:dur>=6?1:0,habillageHours:dur*(10/60)};
+}
+function createShift(){
+ if(!requireDirection())return;
+ const date=esc(document.getElementById("shiftDate").value),start=esc(document.getElementById("shiftStart").value),end=esc(document.getElementById("shiftEnd").value),siteId=Number(document.getElementById("shiftSite").value),agentId=Number(document.getElementById("shiftAgent").value)||null;
+ if(!date||!start||!end||!siteId){toast("Date, horaires et site obligatoires");return}
+ const sh={id:Date.now(),date,start,end,siteId,agentId,status:agentId?"Affecté":"À pourvoir",proposals:[]};
+ if(agentId){
+   const conflict=shiftsData.some(x=>x.agentId===agentId&&overlap(x,sh));
+   if(conflict){toast("Conflit horaire pour cet agent");return}
+ }
+ shiftsData.push(sh);savePlanning();state.modal=null;toast("Vacation créée");render();
+}
+function compatibleAgents(sh){
+ return agentsData.filter(a=>{
+   if(a.status!=="Actif")return false;
+   if(cardDays(a.cardExpiry)!==null&&cardDays(a.cardExpiry)<0)return false;
+   if(a.site && !a.site.includes((sitesData.find(s=>s.id===sh.siteId)||{}).name||""))return false;
+   return !shiftsData.some(x=>x.agentId===a.id&&overlap(x,sh));
+ });
+}
+function proposeShift(id){
+ if(!requireDirection())return;
+ const sh=shiftsData.find(x=>x.id===id);if(!sh)return;
+ const list=compatibleAgents(sh);
+ if(!list.length){toast("Aucun agent compatible trouvé");return}
+ list.forEach(a=>{if(!proposalsData.some(p=>p.shiftId===id&&p.agentId===a.id))proposalsData.push({id:Date.now()+a.id,shiftId:id,agentId:a.id,status:"En attente",createdAt:new Date().toISOString()})});
+ sh.status="Propositions envoyées";savePlanning();toast(list.length+" agent(s) ont reçu une proposition");render();
+}
+function acceptProposal(pid){
+ const pr=proposalsData.find(p=>p.id===pid);if(!pr)return;
+ const sh=shiftsData.find(s=>s.id===pr.shiftId);if(!sh)return;
+ const conflict=shiftsData.some(x=>x.id!==sh.id&&x.agentId===pr.agentId&&overlap(x,sh));
+ if(conflict){toast("Conflit horaire : prestation indisponible");return}
+ pr.status="Acceptée";sh.status="En attente de validation";sh.agentId=pr.agentId;
+ proposalsData.filter(p=>p.shiftId===sh.id&&p.id!==pid).forEach(p=>p.status="Refusée");
+ savePlanning();toast("Prestation acceptée");render();
+}
+function rejectProposal(pid){
+ const pr=proposalsData.find(p=>p.id===pid);if(pr){pr.status="Refusée";savePlanning();toast("Proposition refusée");render()}
+}
+function validateShift(id){
+ if(!requireDirection())return;
+ const sh=shiftsData.find(s=>s.id===id);if(!sh||!sh.agentId)return;
+ sh.status="Affecté";savePlanning();toast("Vacation validée");render();
+}
 function saveData(){
  agentsData=agentsData.map(a=>({...a,cardNumber:a.cardNumber||"",cardExpiry:a.cardExpiry||""}));
  localStorage.setItem("securian_clients",JSON.stringify(clientsData));
@@ -93,6 +174,8 @@ function saveData(){
  localStorage.setItem("securian_subcontractors",JSON.stringify(subcontractorsData));
  localStorage.setItem("securian_sub_docs",JSON.stringify(subDocsData));
  localStorage.setItem("securian_sub_agents",JSON.stringify(subAgentsData));
+ localStorage.setItem("securian_shifts",JSON.stringify(shiftsData));
+ localStorage.setItem("securian_proposals",JSON.stringify(proposalsData));
 }
 function esc(v){return String(v??"").replace(/[&<>"']/g,m=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#039;"}[m]))}
 function canManage(){return state.role==="direction"}
@@ -152,7 +235,7 @@ root.innerHTML=`<div class="login"><div class="loginbox">
 }
 function doLogin(){state.role=document.getElementById("role").value;state.screen=roles[state.role].dash?"dashboard":"planning";render()}
 function navItems(){
-let base=[["planning","Planning"],["pointage","Pointage"],["sites","Sites"]];
+let base=[["planning","Planning"],["proposals","Propositions"],["pointage","Pointage"],["sites","Sites"]];
 if(roles[state.role].dash) base.unshift(["dashboard","Accueil"]);
 if(state.role==="direction"){base.push(["agents","Agents"],["sous","Sous-traitants"],["accounts","Comptes"],["docs","Documents"],["incidents","Incidents"])}
 else if(state.role==="cadre"){base.push(["agents","Agents"],["sous","Sous-traitants"],["docs","Documents"],["incidents","Incidents"])}
@@ -171,6 +254,10 @@ root.innerHTML=`<div class="app">
 
 function modalHTML(){
  if(!state.modal)return "";
+ if(state.modal==="shift"){
+  return `<div class="modal" onclick="if(event.target===this)closeModal()"><div class="modalbox"><div class="itemtop"><div class="title">Créer une vacation</div><button class="outline" onclick="closeModal()">✕</button></div><div class="formgrid"><label class="small">Date</label><input id="shiftDate" class="field" type="date"><label class="small">Début</label><input id="shiftStart" class="field" type="time" value="18:00"><label class="small">Fin</label><input id="shiftEnd" class="field" type="time" value="06:00"><select id="shiftSite" class="field"><option value="">Choisir un site *</option>${sitesData.map(s=>`<option value="${s.id}">${esc(s.name)} — ${esc(s.city)}</option>`).join("")}</select><select id="shiftAgent" class="field"><option value="">À pourvoir / rechercher</option>${agentsData.map(a=>`<option value="${a.id}">${esc(a.first)} ${esc(a.last)}</option>`).join("")}</select></div><div class="small" style="margin-top:10px">Les variables seront calculées automatiquement : nuit 21h–06h, dimanche, férié, habillage et panier ≥ 6 h.</div><button class="primary" style="width:100%;margin-top:12px" onclick="createShift()">CRÉER LA VACATION</button></div></div>`;
+ }
+
  if(state.modal==="subdetail")return subDetailHTML();
  if(state.modal==="subagent"){
   const s=subcontractorsData.find(x=>x.id===state.subId);
@@ -221,9 +308,25 @@ function dashboard(){return `<div class="eyebrow">TABLEAU DE BORD</div><div clas
 <div class="grid"><div class="stat"><div>👮</div><div class="num">42</div><div class="label">Agents</div></div><div class="stat"><div>🏢</div><div class="num">18</div><div class="label">Sites</div></div><div class="stat"><div>🟢</div><div class="num">35</div><div class="label">En service</div></div><div class="stat"><div>🪪</div><div class="num">3</div><div class="label">Documents à renouveler</div></div></div>
 <div class="section">Service en cours</div><div class="card"><div class="title">Centre commercial — Montpellier</div><div class="muted">Ahmed B. • SECURIAN • 18:00 → 06:00</div><div class="row"><button class="darkbtn" onclick="waze('Centre commercial Montpellier')">🧭 Ouvrir Waze</button><span class="badge ok">POINTAGE OK</span></div></div>
 <div class="section">Alertes</div><div class="card"><div>🔴 1 carte professionnelle expirée</div><div style="margin-top:9px">🟠 2 habilitations à renouveler sous 30 jours</div><div style="margin-top:9px">⚠️ 2 anomalies de pointage</div></div><div class="section">Administration</div><div class="grid"><button class="card" style="text-align:left;color:#fff" onclick="go('sites')">🏢<br><b>Gérer les sites</b><br><span class="small">Créer, modifier, supprimer</span></button><button class="card" style="text-align:left;color:#fff" onclick="go('agents')">👮<br><b>Gérer les agents</b><br><span class="small">Créer et affecter</span></button><button class="card" style="text-align:left;color:#fff" onclick="go('sous')">🤝<br><b>Sous-traitants</b><br><span class="small">Entreprises partenaires</span></button><button class="card" style="text-align:left;color:#fff" onclick="go('accounts')">🔐<br><b>Comptes</b><br><span class="small">Créer les accès</span></button></div>`}
-function planning(){return `<div class="eyebrow">ORGANISATION</div><div class="h1">Planning</div><div class="muted">Services, affectations et remplacements.</div><div class="section">Aujourd'hui — 19 août</div><div class="list">
-${["18:00–06:00 • Centre commercial • Ahmed B. — SECURIAN","06:00–18:00 • Entrepôt • Karim D. — SECURIAN","18:00–06:00 • Hôtel • Mohamed — PROTECT PLUS"].map(x=>`<div class="item"><strong>${x}</strong><div class="small">Affectation • Consignes • Pointage</div></div>`).join("")}</div>
-<div class="card" style="margin-top:14px"><div class="title">🔄 Besoin d'un remplaçant ?</div><div class="muted">Recherche par disponibilité, qualification, validité des documents et proximité.</div><button class="primary" style="margin-top:12px" onclick="toast('Recherche de remplaçants lancée')">RECHERCHER</button></div>`}
+function proposals(){
+ const me=agentsData.find(a=>a.first===profiles[state.role]?.person)||agentsData[0];
+ const mine=proposalsData.filter(p=>!me||p.agentId===me.id);
+ return `<div class="eyebrow">OPPORTUNITÉS</div><div class="h1">Propositions</div><div class="muted">Les prestations proposées à l'agent connecté.</div><div class="list">${mine.length?mine.map(p=>{const sh=shiftsData.find(s=>s.id===p.shiftId),site=sh&&sitesData.find(s=>s.id===sh.siteId);return sh?`<div class="item"><div class="itemtop"><strong>📍 ${esc(site?site.name:"Site")}</strong><span class="badge ${p.status==="Acceptée"?"ok":p.status==="Refusée"?"danger":"warn"}">${esc(p.status)}</span></div><div class="small">📅 ${esc(sh.date)} • ${esc(sh.start)} → ${esc(sh.end)} • ${variableCalc(sh).hours} h</div>${p.status==="En attente"?`<div class="row"><button class="primary" onclick="acceptProposal(${p.id})">✅ ACCEPTER</button><button class="danger" onclick="rejectProposal(${p.id})">REFUSER</button></div>`:""}</div>`:""}).join(""):`<div class="item"><strong>Aucune proposition</strong></div>`}</div>`
+}function planning(){
+ const siteName=id=>{const s=sitesData.find(x=>x.id===id);return s?s.name+" — "+s.city:"Site inconnu"};
+ const agentName=id=>{const a=agentsData.find(x=>x.id===id);return a?a.first+" "+a.last:"À pourvoir"};
+ const sorted=[...shiftsData].sort((a,b)=>(a.date+a.start).localeCompare(b.date+b.start));
+ return `<div class="eyebrow">ORGANISATION</div><div class="h1">Planning</div><div class="muted">Créez les vacations, affectez les agents et envoyez des propositions.</div>
+ ${canManage()?`<button class="primary" style="width:100%;margin-top:14px" onclick="state.modal='shift';render()">➕ CRÉER UNE VACATION</button>`:""}
+ <div class="section">Vue des vacations</div><div class="list">${sorted.map(sh=>{
+  const v=variableCalc(sh), proposals=proposalsData.filter(p=>p.shiftId===sh.id&&p.status==="En attente").length;
+  return `<div class="item"><div class="itemtop"><strong>📅 ${esc(sh.date)} • ${esc(sh.start)} → ${esc(sh.end)}</strong><span class="badge ${sh.status==="Affecté"?"ok":sh.status.includes("Propositions")?"warn":"danger"}">${esc(sh.status)}</span></div>
+  <div class="small">🏢 ${esc(siteName(sh.siteId))} • 👮 ${esc(agentName(sh.agentId))}</div>
+  <div class="small">⏱️ ${v.hours} h • 🌙 ${v.night} h nuit • ${v.sunday?"🟣 dimanche • ":""}${v.holiday?"🔴 férié • ":""}🍽️ ${v.panier} panier • 👕 ${v.habillageHours.toFixed(2)} h habillage</div>
+  <div class="row">${sh.status==="À pourvoir"&&canManage()?`<button class="primary" onclick="proposeShift(${sh.id})">🔎 RECHERCHER DES AGENTS</button>`:""}${sh.status==="En attente de validation"&&canManage()?`<button class="primary" onclick="validateShift(${sh.id})">✅ VALIDER</button>`:""}${proposals&&canManage()?`<button class="outline" onclick="toast(proposals+' proposition(s) en attente')">🔔 ${proposals} réponse(s)</button>`:""}</div></div>`
+ }).join("")}</div>
+ <div class="section">Variables du planning</div><div class="grid"><div class="stat">⏱️<b>${sorted.reduce((n,s)=>n+variableCalc(s).hours,0).toFixed(1)}</b><span>heures</span></div><div class="stat">🌙<b>${sorted.reduce((n,s)=>n+variableCalc(s).night,0).toFixed(1)}</b><span>heures nuit</span></div><div class="stat">🍽️<b>${sorted.reduce((n,s)=>n+variableCalc(s).panier,0)}</b><span>paniers</span></div><div class="stat">👕<b>${sorted.reduce((n,s)=>n+variableCalc(s).habillageHours,0).toFixed(1)}</b><span>heures habillage</span></div></div>`
+}
 function pointage(){return `<div class="eyebrow">PRÉSENCE</div><div class="h1">Pointage</div><div class="card"><div style="font-size:38px">📍</div><div class="title">Centre commercial — Montpellier</div><div class="muted">La géolocalisation est utilisée uniquement pour le pointage et le service.</div><button class="primary" style="width:100%;margin-top:18px" onclick="toast('Service démarré • position enregistrée')">DÉMARRER MON SERVICE</button><button class="outline" style="width:100%;margin-top:9px" onclick="toast('Service terminé • pointage enregistré')">TERMINER MON SERVICE</button><button class="darkbtn" style="width:100%;margin-top:9px" onclick="waze('Centre commercial Montpellier')">🧭 ITINÉRAIRE WAZE</button></div>`}
 
 function openClient(){if(!requireDirection())return;state.modal="client";state.editType=null;state.editIndex=null;render()}
