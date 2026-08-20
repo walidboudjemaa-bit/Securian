@@ -126,109 +126,28 @@ function overlap(a,b){
  return startA<endB&&startB<endA;
 }
 function variableCalc(sh){
-  // Règles SECURIAN :
-  // JOUR : lun-sam 06:00–21:00
-  // NUIT : lun-ven 21:00–06:00 + sam 21:00–24:00
-  // DIMANCHE JOUR : 06:00–21:00
-  // DIMANCHE NUIT : 00:01–06:00 + 21:00–24:00
-  // FÉRIÉ JOUR / FÉRIÉ NUIT : même découpage horaire, mais sur une date fériée.
-
   const [h1,m1]=sh.start.split(":").map(Number);
   const [h2,m2]=sh.end.split(":").map(Number);
   let start=h1*60+m1,end=h2*60+m2;
-  if(end<=start)end+=1440;
-
-  let dayHours=0,nightHours=0;
-  let sundayDayHours=0,sundayNightHours=0;
-  let holidayDayHours=0,holidayNightHours=0;
-
-  const holidays=[
-    "2026-01-01","2026-04-06","2026-05-01","2026-05-08",
-    "2026-05-14","2026-05-25","2026-07-14","2026-08-15",
-    "2026-11-01","2026-11-11","2026-12-25"
-  ];
-
-  for(let minuteIndex=start;minuteIndex<end;minuteIndex++){
-    const minuteOfDay=minuteIndex%1440;
-    const dateOffset=Math.floor(minuteIndex/1440);
-    const d=new Date(sh.date+"T12:00:00");
-    d.setDate(d.getDate()+dateOffset);
-
-    const day=d.getDay();
-    const dateStr=[
-      d.getFullYear(),
-      String(d.getMonth()+1).padStart(2,"0"),
-      String(d.getDate()).padStart(2,"0")
-    ].join("-");
-
-    const isSunday=day===0;
-    const isNight=minuteOfDay>=1260 || minuteOfDay<360;
-    const isHoliday=holidays.includes(dateStr);
-
-    if(isSunday){
-      if(isNight)sundayNightHours+=1/60;
-      else sundayDayHours+=1/60;
-    }else{
-      if(isNight)nightHours+=1/60;
-      else dayHours+=1/60;
-    }
-
-    if(isHoliday){
-      if(isNight)holidayNightHours+=1/60;
-      else holidayDayHours+=1/60;
-    }
+  if(end<=start) end+=1440;
+  let dayHours=0,nightHours=0,sundayDayHours=0,sundayNightHours=0,holidayDayHours=0,holidayNightHours=0;
+  const holidays=["2026-01-01","2026-04-06","2026-05-01","2026-05-08","2026-05-14","2026-05-25","2026-07-14","2026-08-15","2026-11-01","2026-11-11","2026-12-25"];
+  for(let i=start;i<end;i++){
+    const minute=i%1440, offset=Math.floor(i/1440);
+    const d=new Date(sh.date+"T12:00:00"); d.setDate(d.getDate()+offset);
+    const dow=d.getDay();
+    const ds=[d.getFullYear(),String(d.getMonth()+1).padStart(2,"0"),String(d.getDate()).padStart(2,"0")].join("-");
+    const night=minute>=1260 || minute<360;
+    const sunday=dow===0;
+    const holiday=holidays.includes(ds);
+    if(sunday){ if(night) sundayNightHours+=1/60; else sundayDayHours+=1/60; }
+    else { if(night) nightHours+=1/60; else dayHours+=1/60; }
+    if(holiday){ if(night) holidayNightHours+=1/60; else holidayDayHours+=1/60; }
   }
-
   const hours=(end-start)/60;
-
-  return {
-    hours,
-    dayHours,
-    night:nightHours+sundayNightHours,
-    nightHours:nightHours+sundayNightHours,
-    sundayDayHours,
-    sundayNightHours,
-    sundayHours:sundayDayHours+sundayNightHours,
-    holidayDayHours,
-    holidayNightHours,
-    holidayHours:holidayDayHours+holidayNightHours,
-    sunday:sundayDayHours+sundayNightHours>0,
-    holiday:holidayDayHours+holidayNightHours>0,
-    panier:hours>=6?1:0,
-    habillageHours:hours*(10/60)
-  };
+  return {hours,dayHours,nightHours,night:nightHours,sundayDayHours,sundayNightHours,sundayHours:sundayDayHours+sundayNightHours,sunday:sundayDayHours+sundayNightHours>0,holidayDayHours,holidayNightHours,holidayHours:holidayDayHours+holidayNightHours,holiday:holidayDayHours+holidayNightHours>0,panier:hours>=6?1:0,habillageHours:hours*(10/60)};
 }
 
-function createMultiShifts(){
- if(!requireDirection())return;
- const startDate=document.getElementById("shiftDate")?.value;
- const endDate=document.getElementById("shiftEndDate")?.value;
- const start=document.getElementById("shiftStart")?.value;
- const end=document.getElementById("shiftEnd")?.value;
- const siteId=Number(document.getElementById("shiftSite")?.value);
- const agentId=Number(document.getElementById("shiftAgent")?.value)||null;
- const subcontractorId=Number(document.getElementById("shiftSubcontractor")?.value)||null;
- const subAgentId=Number(document.getElementById("shiftSubAgent")?.value)||null;
- const days=[...document.querySelectorAll('input[name="shiftDays"]:checked')].map(x=>Number(x.value));
- if(!startDate||!endDate||!start||!end||!siteId){toast("Date(s), horaires et site obligatoires");return}
- if(new Date(endDate)<new Date(startDate)){toast("La date de fin doit être après la date de début");return}
- if(!days.length){toast("Sélectionnez au moins un jour");return}
- if(subcontractorId&&!subAgentId){toast("Pour un sous-traitant, sélectionnez obligatoirement son agent");return}
- if(subAgentId&&(!selectedSubAgent(subAgentId)||Number(selectedSubAgent(subAgentId).subId)!==subcontractorId)){toast("Agent sous-traitant invalide");return}
- if(agentId&&subAgentId){toast("Choisissez soit un agent SECURIAN, soit un agent sous-traitant");return}
- let created=0,skipped=0;
- for(let d=new Date(startDate+"T12:00:00");d<=new Date(endDate+"T12:00:00");d.setDate(d.getDate()+1)){
-   if(!days.includes(d.getDay()))continue;
-   const date=d.toISOString().slice(0,10);
-   const sh={id:Date.now()+created,date,start,end,siteId,agentId,subcontractorId,subAgentId,status:(agentId||subAgentId)?"Affecté":"À pourvoir",proposals:[]};
-   const conflict=agentId&&shiftsData.some(x=>x.agentId===agentId&&overlap(x,sh));
-   const subConflict=subAgentId&&subAgentConflict(subAgentId,sh);
-   if(conflict||subConflict){skipped++;continue}
-   shiftsData.push(sh);if(agentId)notifyAgentPlanning(agentId,[sh.id]);created++;
- }
- if(!created){toast("Aucune vacation créée");return}
- savePlanning();state.modal=null;toast(`${created} vacation${created>1?'s':''} créée${created>1?'s':''}${skipped?` • ${skipped} ignorée${skipped>1?'s':''} pour conflit`:''}`);render();
-}
 function createShift(){
  if(!requireDirection())return;
  const date=esc(document.getElementById("shiftDate").value),start=esc(document.getElementById("shiftStart").value),end=esc(document.getElementById("shiftEnd").value);
