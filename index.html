@@ -126,26 +126,78 @@ function overlap(a,b){
  return startA<endB&&startB<endA;
 }
 function variableCalc(sh){
+  // J  = 06:00–21:00 du lundi au samedi
+  // N  = 21:00–06:00 du lundi au samedi
+  // DJ = 06:00–21:00 du dimanche
+  // DN = 00:00–06:00 et 21:00–24:00 du dimanche
+  // Calcul minute par minute pour les vacations traversant minuit.
+
   const [h1,m1]=sh.start.split(":").map(Number);
   const [h2,m2]=sh.end.split(":").map(Number);
-  let start=h1*60+m1,end=h2*60+m2;
+  let start=h1*60+m1;
+  let end=h2*60+m2;
   if(end<=start) end+=1440;
-  let dayHours=0,nightHours=0,sundayDayHours=0,sundayNightHours=0,holidayDayHours=0,holidayNightHours=0;
-  const holidays=["2026-01-01","2026-04-06","2026-05-01","2026-05-08","2026-05-14","2026-05-25","2026-07-14","2026-08-15","2026-11-01","2026-11-11","2026-12-25"];
-  for(let i=start;i<end;i++){
-    const minute=i%1440, offset=Math.floor(i/1440);
-    const d=new Date(sh.date+"T12:00:00"); d.setDate(d.getDate()+offset);
-    const dow=d.getDay();
-    const ds=[d.getFullYear(),String(d.getMonth()+1).padStart(2,"0"),String(d.getDate()).padStart(2,"0")].join("-");
-    const night=minute>=1260 || minute<360;
-    const sunday=dow===0;
-    const holiday=holidays.includes(ds);
-    if(sunday){ if(night) sundayNightHours+=1/60; else sundayDayHours+=1/60; }
-    else { if(night) nightHours+=1/60; else dayHours+=1/60; }
-    if(holiday){ if(night) holidayNightHours+=1/60; else holidayDayHours+=1/60; }
+
+  let dayHours=0, nightHours=0;
+  let sundayDayHours=0, sundayNightHours=0;
+  let holidayDayHours=0, holidayNightHours=0;
+
+  const holidays=[
+    "2026-01-01","2026-04-06","2026-05-01","2026-05-08",
+    "2026-05-14","2026-05-25","2026-07-14","2026-08-15",
+    "2026-11-01","2026-11-11","2026-12-25"
+  ];
+
+  for(let minuteIndex=start; minuteIndex<end; minuteIndex++){
+    const minuteOfDay=minuteIndex%1440;
+    const dayOffset=Math.floor(minuteIndex/1440);
+
+    const d=new Date(sh.date+"T12:00:00");
+    d.setDate(d.getDate()+dayOffset);
+
+    const dayOfWeek=d.getDay();
+    const dateStr=[
+      d.getFullYear(),
+      String(d.getMonth()+1).padStart(2,"0"),
+      String(d.getDate()).padStart(2,"0")
+    ].join("-");
+
+    const isSunday=dayOfWeek===0;
+    const isNight=(minuteOfDay>=1260 || minuteOfDay<360);
+    const isHoliday=holidays.includes(dateStr);
+
+    if(isSunday){
+      if(isNight) sundayNightHours += 1/60;
+      else sundayDayHours += 1/60;
+    }else{
+      if(isNight) nightHours += 1/60;
+      else dayHours += 1/60;
+    }
+
+    if(isHoliday){
+      if(isNight) holidayNightHours += 1/60;
+      else holidayDayHours += 1/60;
+    }
   }
+
   const hours=(end-start)/60;
-  return {hours,dayHours,nightHours,night:nightHours,sundayDayHours,sundayNightHours,sundayHours:sundayDayHours+sundayNightHours,sunday:sundayDayHours+sundayNightHours>0,holidayDayHours,holidayNightHours,holidayHours:holidayDayHours+holidayNightHours,holiday:holidayDayHours+holidayNightHours>0,panier:hours>=6?1:0,habillageHours:hours*(10/60)};
+
+  return {
+    hours,
+    dayHours,
+    nightHours,
+    night:nightHours,
+    sundayDayHours,
+    sundayNightHours,
+    sundayHours:sundayDayHours+sundayNightHours,
+    sunday:sundayDayHours+sundayNightHours>0,
+    holidayDayHours,
+    holidayNightHours,
+    holidayHours:holidayDayHours+holidayNightHours,
+    holiday:holidayDayHours+holidayNightHours>0,
+    panier:hours>=6?1:0,
+    habillageHours:hours*(10/60)
+  };
 }
 
 function createShift(){
@@ -551,7 +603,7 @@ function openPlanningPrint(kind,rows,month,entityId){
  const byDate={};
  rows.forEach(s=>(byDate[s.date]??=[]).push(s));
 
- let total=0,totalNight=0,totalSun=0,totalHoliday=0;
+ let total=0,totalDay=0,totalNight=0,totalSundayDay=0,totalSundayNight=0,totalHolidayDay=0,totalHolidayNight=0;
  const body=monthDates(month).map(date=>{
   const list=byDate[date]||[];
   const monday=frDay(date)==="lundi";
@@ -561,9 +613,9 @@ function openPlanningPrint(kind,rows,month,entityId){
   return list.map(s=>{
    const site=sitesData.find(x=>x.id===s.siteId),client=clientsData.find(c=>c.id===Number(site?.clientId)),agent=agentsData.find(a=>a.id===s.agentId),subAgent=subAgentsData.find(a=>a.id===s.subAgentId),subcontractor=subcontractorsData.find(x=>x.id===s.subcontractorId);
    const v=variableCalc(s);
-   total+=v.hours; totalNight+=v.night; totalSun+=v.sundayHours||0; totalHoliday+=v.holidayHours||0;
+   total+=v.hours; totalDay+=v.dayHours||0; totalNight+=v.nightHours||0; totalSundayDay+=v.sundayDayHours||0; totalSundayNight+=v.sundayNightHours||0; totalHolidayDay+=v.holidayDayHours||0; totalHolidayNight+=v.holidayNightHours||0;
    const common=`<td>${frDay(date)}</td><td>${frDate(date)}</td><td>${esc(s.start)}-${esc(s.end)}</td><td>${fmt(v.hours)}</td>`;
-   const variables=`<td>${v.hours?fmt(v.hours):""}</td><td>${v.night?fmt(v.night):""}</td><td>${v.sundayHours?fmt(v.sundayHours):""}</td><td>${v.sundayNightHours?fmt(v.sundayNightHours):""}</td><td>${v.holidayDayHours?fmt(v.holidayDayHours):""}</td><td>${v.holidayNightHours?fmt(v.holidayNightHours):""}</td>`;
+   const variables=`<td>${v.dayHours?fmt(v.dayHours):""}</td><td>${v.nightHours?fmt(v.nightHours):""}</td><td>${v.sundayDayHours?fmt(v.sundayDayHours):""}</td><td>${v.sundayNightHours?fmt(v.sundayNightHours):""}</td><td>${v.holidayDayHours?fmt(v.holidayDayHours):""}</td><td>${v.holidayNightHours?fmt(v.holidayNightHours):""}</td>`;
    if(kind==="site"){
     return `<tr>${common}<td>${esc(client?.name||"")}</td><td>${esc(site?.name||"")}</td><td>${subAgent?esc(subAgent.first+" "+subAgent.last):esc(agent?agent.first+" "+agent.last:"À pourvoir")}</td>${variables}</tr>`;
    }
@@ -577,7 +629,7 @@ function openPlanningPrint(kind,rows,month,entityId){
 
  const totals=kind==="site"
   ? `<tr class="total"><td>TOTAL</td><td></td><td></td><td>${fmt(total)}</td><td></td><td></td><td></td><td>${fmt(total)}</td><td>${fmt(totalNight)}</td><td>${fmt(totalSun)}</td><td></td><td>${fmt(totalHoliday)}</td><td></td></tr>`
-  : `<tr class="total"><td>TOTAL</td><td></td><td></td><td>${fmt(total)}</td><td></td><td></td><td>${fmt(total)}</td><td>${fmt(totalNight)}</td><td>${fmt(totalSun)}</td><td></td><td>${fmt(totalHoliday)}</td><td></td></tr>`;
+  : `<tr class="total"><td>TOTAL</td><td></td><td></td><td>${fmt(total)}</td><td></td><td></td><td>${fmt(totalDay)}</td><td>${fmt(totalNight)}</td><td>${fmt(totalSundayDay)}</td><td>${fmt(totalSundayNight)}</td><td>${fmt(totalHolidayDay)}</td><td>${fmt(totalHolidayNight)}</td></tr>`;
 
  const w=window.open("","_blank");
  if(!w){toast("Autorisez les fenêtres popup pour exporter en PDF");return}
@@ -585,7 +637,7 @@ function openPlanningPrint(kind,rows,month,entityId){
  @page{size:A4 landscape;margin:7mm}
  *{box-sizing:border-box}body{font-family:Arial,Helvetica,sans-serif;color:#111;margin:0;padding:5px}
  .head{display:grid;grid-template-columns:125px 1fr 125px;align-items:center;text-align:center;margin-bottom:8px}
- .head img{width:105px;height:78px;object-fit:contain;justify-self:start;filter:brightness(1.18) contrast(.96)}
+ .head img{width:120px;height:90px;object-fit:contain;justify-self:start;filter:brightness(1.28) contrast(.92)}
  h1{font-size:27px;margin:0;font-weight:800;letter-spacing:.5px}
  .range{font-size:10px;font-weight:700;margin-top:3px}.tel{font-size:9px;margin-top:2px}
  .entity{font-size:16px;font-weight:800;margin-top:7px}
@@ -598,7 +650,7 @@ function openPlanningPrint(kind,rows,month,entityId){
  .foot{margin:9px auto 0;font-size:8px;line-height:1.35;text-align:center;color:#555;max-width:96%}
  @media print{body{padding:0}}
  </style></head><body>
- <div class="head"><img src="${logo}" alt="SECURIAN"><div><h1>SECURIAN</h1><div class="range">${range}</div><div class="tel">${esc(companySettings.address)}</div><div class="tel">TEL : 06.10.68.63.47</div><div class="entity">${entityTitle}</div></div><div></div></div>
+ <div class="head"><img src="${logo}" alt="SECURIAN"><div><h1>SECURIAN</h1><div class="range">${range}</div><div class="tel">TEL : 06.10.68.63.47</div><div class="entity">${entityTitle}</div></div><div></div></div>
  <table><thead><tr>${header}</tr></thead><tbody>${body}${totals}</tbody></table>
  <div class="foot">${esc(companySettings.planningDisclaimer)}<br>SASU Securian - 67 Rue Joe Dassin 34080 Montpellier -<br>Tel : 06.10.68.63.47 - e-mail : securian34@gmail.com - SASU au capital de 10000€ -<br>Agrément société : 034-2118-06-20-20190702739 - SIRET : 84995389800020 - Code APE : 8010Z - Assurance : Hiscox<br>Article L-612-14 : L'autorisation d'exercice ne confère aucune prérogative de puissance publique à l'entreprise ou aux<br>personnes qui en bénéficient.</div>
  <script>window.addEventListener('load',()=>setTimeout(()=>window.print(),250));<\/script></body></html>`);
